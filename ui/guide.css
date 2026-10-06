@@ -92,3 +92,5 @@
 @media(max-width:700px){.wsplit{grid-template-columns:1fr}}
 
 .lnk{color:var(--accent-text);font-weight:700;cursor:pointer;text-decoration:underline;}
+.wform input:disabled{opacity:.5;cursor:not-allowed;background:var(--surface-3);}
+.wform .cc-btn:disabled{opacity:.5;cursor:not-allowed;}

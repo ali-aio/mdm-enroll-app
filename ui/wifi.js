@@ -50,24 +50,36 @@ const Wifi = (() => {
     const list = ex.querySelector('.foundlist'), pc = ex.querySelector('#pc'), pb = ex.querySelector('#pb'), pmsg = ex.querySelector('.pmsg');
     const pa = ex.querySelector('#pa'), pairbox = ex.querySelector('.pairbox');
     let detected = '';      // pairing address found on the network
+    let busy = false;
+    // The code box and Pair button wake up only once there is a pairing screen to pair with
+    // (found on the network, or its address typed), and Pair only once all 6 digits are in.
+    const syncEnable = () => {
+      const have = !!(pa.value.trim() || detected);
+      pc.disabled = busy || !have;
+      pc.placeholder = have ? '••••••' : 'waiting…';
+      pb.disabled = busy || !have || pc.value.length !== 6;
+    };
+    pc.addEventListener('input', () => { pc.value = pc.value.replace(/\D/g, '').slice(0, 6); syncEnable(); });
+    pa.addEventListener('input', syncEnable);
+    pc.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !pb.disabled) pb.click(); });
 
     pb.onclick = async () => {
       const addr = (pa.value.trim() || detected);
-      if (!addr) { pmsg.innerHTML = '<div class="wmsg bad">Open “Pair device with pairing code” on the phone first, so the app can find it. Or enter its address below.</div>'; pairbox.open = true; return; }
-      pb.disabled = true; pb.innerHTML = '<span class="spin"></span> Pairing…'; pmsg.innerHTML = '';
+      if (!addr) return;
+      busy = true; syncEnable(); pb.innerHTML = '<span class="spin"></span> Pairing…'; pmsg.innerHTML = '';
       mark(2, 'on');
       // Backend pairs, then connects by itself; the label only tells the person what is going on.
       const t = setTimeout(() => { if (alive()) pb.innerHTML = '<span class="spin"></span> Connecting…'; }, 2500);
       try {
         const handle = await invoke('wifi_pair_connect', { addr, code: pc.value });
         clearTimeout(t);
-        pc.value = ''; done[2] = true; mark(2, 'ok');
+        pc.value = ''; busy = false; done[2] = true; mark(2, 'ok'); pc.disabled = true;
         pb.textContent = 'Connected ✓';
         pmsg.innerHTML = '<div class="wmsg ok">Paired and connected. It now shows up in your device list.</div>';
         ctx.onConnected(handle);
       } catch (err) {
         clearTimeout(t);
-        pb.disabled = false; pb.textContent = 'Pair';
+        busy = false; pb.textContent = 'Pair'; syncEnable();
         cs[2].classList.add('bad');
         pmsg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
         setTimeout(() => cs[2].classList.remove('bad'), 600);
@@ -82,6 +94,7 @@ const Wifi = (() => {
         if (!alive()) return;
         const pairing = svcs.find((x) => x.kind === 'pairing');
         detected = pairing ? pairing.addr : '';
+        if (!busy) syncEnable();
         list.innerHTML = pairing
           ? `<div class="found"><div class="ph2">${PH}</div><div class="m"><b>Pairing screen found</b><span class="mono">${esc(pairing.addr.split(':')[0])}</span></div>${CHECKSVG}</div>`
           : '<div class="found"><div class="wave"><b></b><b></b></div><div class="m"><b>Waiting for the pairing screen…</b><span>Open “Pair device with pairing code” on the phone.</span></div></div>';
@@ -90,6 +103,7 @@ const Wifi = (() => {
       }
     })();
 
+    syncEnable();
     show(0);
   }
   return { draw };
