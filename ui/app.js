@@ -499,7 +499,7 @@ function renderHero() {
   } else if (d.status === 'blocked') {
     const why = String(d.note || 'Blocked').split(' — ')[0];
     const isAccount = /account/i.test(d.note || '');
-    hero.innerHTML = head(chip('bad', ICON.user + ' ' + esc(why))) +
+    hero.innerHTML = head(chip('bad', ICON.user + ' ' + esc(why)), chip('bad', ICON.x + ' Can’t be enrolled', 'Android only lets an app become Device Owner on a phone with no accounts. Fix it and plug it in again.')) +
       `<div class="row"><button class="cc-btn sm" data-fix>How to fix ${ICON.q.replace('class="ic"', 'class="ic" style="width:13px;height:13px;display:inline-block;vertical-align:-2px"')}</button></div>` +
       (fixOpen ? `<div class="hpop"><b>How to fix</b><ol><li>Factory reset the phone.</li>${isAccount ? '<li>Don’t sign in to Google.</li>' : ''}<li>Plug it in again.</li></ol></div>` : '');
   } else if (d.status === 'unauthorized') {
