@@ -17,6 +17,7 @@ struct State {
     /// Per-handle adb probe results; owner/accounts are re-read every 10 s, not every poll.
     probes: Mutex<HashMap<String, (Instant, Probe)>>,
     busy: Mutex<Vec<String>>,
+    adb_version: Mutex<String>,
 }
 
 #[derive(Clone, Default)]
@@ -308,6 +309,76 @@ fn last_login(app: AppHandle) -> Option<serde_json::Value> {
     serde_json::from_str(&raw).ok()
 }
 
+#[derive(Serialize)]
+struct AdbInfo {
+    found: bool,
+    path: String,
+    version: String,
+    /// mac | linux | win, so the UI can show the right install steps.
+    os: String,
+}
+
+/// Is adb usable? `retry` forgets the cached lookup first (the Retry button).
+#[tauri::command]
+async fn adb_status(app: AppHandle, retry: bool) -> AdbInfo {
+    let os = match std::env::consts::OS {
+        "macos" => "mac",
+        "windows" => "win",
+        _ => "linux",
+    }
+    .to_string();
+    let os2 = os.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        if retry {
+            *st.adb.lock().unwrap() = None;
+            st.adb_version.lock().unwrap().clear();
+        }
+        match adb_of(&app, &st) {
+            Ok(a) => {
+                let mut v = st.adb_version.lock().unwrap();
+                if v.is_empty() {
+                    *v = a.run(&["version"]).ok().and_then(|o| o.lines().next().map(str::to_string)).unwrap_or_default();
+                }
+                AdbInfo { found: true, path: a.bin.display().to_string(), version: v.clone(), os }
+            }
+            Err(_) => AdbInfo { found: false, path: String::new(), version: String::new(), os },
+        }
+    })
+    .await
+    .unwrap_or(AdbInfo { found: false, path: String::new(), version: String::new(), os: os2 })
+}
+
+#[tauri::command]
+async fn wifi_discover(app: AppHandle) -> Result<Vec<enroll_core::adb::MdnsService>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        Ok(adb_of(&app, &st)?.mdns_services())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wifi_pair(app: AppHandle, addr: String, code: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        adb_of(&app, &st)?.pair(addr.trim(), code.trim())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wifi_connect(app: AppHandle, addr: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        adb_of(&app, &st)?.connect(addr.trim())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, String> {
     let adb = adb_of(&app, &state)?;
@@ -318,7 +389,7 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_out, list_devices, enroll, adb_version, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_connect, profile, last_login])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

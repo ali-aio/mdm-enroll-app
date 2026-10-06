@@ -37,7 +37,100 @@ pub fn valid_handle(h: &str) -> bool {
         && h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '_' | '-'))
 }
 
+/// A phone found on the network by `adb mdns services`.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct MdnsService {
+    pub name: String,
+    /// "connect" (the Wireless debugging screen's IP:port) or "pairing" (the pairing-code dialog's).
+    pub kind: String,
+    pub addr: String,
+}
+
+/// `host:port` where host is an IPv4 address or a plain hostname. Anything adb would
+/// treat as a flag, or a shell would, is rejected.
+pub fn valid_hostport(a: &str) -> bool {
+    let Some((host, port)) = a.rsplit_once(':') else { return false };
+    let port_ok = port.parse::<u32>().map(|p| (1..=65535).contains(&p)).unwrap_or(false);
+    !host.is_empty()
+        && host.len() <= 253
+        && !host.starts_with('-')
+        && host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-'))
+        && port_ok
+}
+
+/// What `adb connect` printed means it worked ("connected to …" / "already connected to …").
+pub fn connect_ok(out: &str) -> bool {
+    let o = out.to_lowercase();
+    (o.contains("connected to") || o.contains("already connected")) && !o.contains("failed") && !o.contains("cannot")
+}
+
+pub fn parse_mdns(out: &str) -> Vec<MdnsService> {
+    out.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let (name, svc, addr) = (it.next()?, it.next()?, it.next()?);
+            let kind = if svc.contains("_adb-tls-pairing") {
+                "pairing"
+            } else if svc.contains("_adb-tls-connect") {
+                "connect"
+            } else {
+                return None;
+            };
+            valid_hostport(addr).then(|| MdnsService { name: name.to_string(), kind: kind.into(), addr: addr.to_string() })
+        })
+        .collect()
+}
+
 impl Adb {
+    /// Phones on this network with Wireless debugging on (empty when mDNS is unavailable).
+    pub fn mdns_services(&self) -> Vec<MdnsService> {
+        parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default())
+    }
+
+    /// `adb pair <ip:pairing-port> <6-digit code>`. The code and port come from the phone's
+    /// "Pair device with pairing code" dialog and expire when it closes.
+    pub fn pair(&self, addr: &str, code: &str) -> Result<String, String> {
+        if !valid_hostport(addr) {
+            return Err("Enter the IP address and port exactly as the phone shows them, like 192.168.1.20:37215.".into());
+        }
+        if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+            return Err("The pairing code is 6 digits.".into());
+        }
+        let out = self.run(&["pair", addr, code]).unwrap_or_else(|e| e);
+        if out.to_lowercase().contains("successfully paired") {
+            Ok("Paired. Now connect using the other IP address and port on the Wireless debugging screen.".into())
+        } else {
+            Err(format!("Pairing failed. Check the code is current (it changes if you close the dialog) and use the <i>pairing</i> port, not the connect port. adb said: {}", out.trim()))
+        }
+    }
+
+    /// `adb connect`, retried: the first attempt often fails right after pairing or after the
+    /// phone woke up. Failure explains the usual causes in plain words.
+    pub fn connect(&self, addr: &str) -> Result<String, String> {
+        if !valid_hostport(addr) {
+            return Err("Enter the IP address and port as the phone shows them, like 192.168.1.20:41231.".into());
+        }
+        let _ = self.run(&["disconnect", addr]); // drop a stale half-open entry first
+        let mut last = String::new();
+        for attempt in 0..3 {
+            if attempt == 2 {
+                let _ = self.run(&["kill-server"]); // last resort: restart the adb helper
+                self.start_server();
+            }
+            last = self.run(&["connect", addr]).unwrap_or_else(|e| e);
+            if connect_ok(&last) {
+                return Ok(format!("Connected to {addr}."));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+        }
+        Err(format!(
+            "Could not connect to {addr}. Usual causes: the phone and this computer are on different Wi-Fi networks; \
+             the port changed (it changes every time Wireless debugging is switched off and on, so re-read it on the phone); \
+             the phone went to sleep; or it was never paired. adb said: {}",
+            last.trim()
+        ))
+    }
+
     /// Looks for adb in: `$AIO_ADB`, a bundled `platform-tools/` next to the app, then PATH
     /// and the usual SDK locations.
     pub fn find(bundled_dir: Option<&Path>) -> Option<Adb> {
@@ -215,6 +308,40 @@ mod tests {
         let o = parse_owner(other);
         assert!(o.set && !o.ours && o.package == "com.other");
         assert_eq!(parse_owner("nothing here"), Owner::default());
+    }
+
+    #[test]
+    fn hostport_validation() {
+        assert!(valid_hostport("192.168.1.20:41231"));
+        assert!(valid_hostport("pixel.local:5555"));
+        assert!(!valid_hostport("192.168.1.20"));
+        assert!(!valid_hostport("192.168.1.20:0"));
+        assert!(!valid_hostport("192.168.1.20:99999"));
+        assert!(!valid_hostport("-x:5555"));
+        assert!(!valid_hostport("a b:5555"));
+        assert!(!valid_hostport("1.2.3.4:5555; rm -rf /"));
+    }
+
+    #[test]
+    fn connect_output() {
+        assert!(connect_ok("connected to 192.168.1.20:41231"));
+        assert!(connect_ok("already connected to 192.168.1.20:41231"));
+        assert!(!connect_ok("failed to connect to '192.168.1.20:41231': Connection refused"));
+        assert!(!connect_ok("cannot connect to 192.168.1.20:41231: No route to host"));
+        assert!(!connect_ok(""));
+    }
+
+    #[test]
+    fn mdns_lines() {
+        let out = "List of discovered mdns services\n\
+            adb-ABC123-xyz\t_adb-tls-connect._tcp.\t192.168.1.20:41231\n\
+            adb-ABC123-pp\t_adb-tls-pairing._tcp.\t192.168.1.20:37215\n\
+            junk\t_other._tcp.\t1.2.3.4:5\n";
+        let v = parse_mdns(out);
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].kind, "connect");
+        assert_eq!(v[1].kind, "pairing");
+        assert_eq!(v[1].addr, "192.168.1.20:37215");
     }
 
     #[test]

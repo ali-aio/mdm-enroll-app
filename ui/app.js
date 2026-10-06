@@ -56,6 +56,10 @@ const picked = {};             // handle -> class chosen
 const run = {};                // handle -> { step, error, done }  (this session's enroll attempts)
 let todayCount = 0;
 let heroKey = '';
+let adb = { found: true, os: 'linux', version: '' };   // from adb_status
+let guideOs = null;            // OS tab shown in the adb help (defaults to this computer)
+let emptySince = 0, tipShown = false;
+let heroTok = {};              // cancels the phone animation when the hero is redrawn
 
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || ICON.phone);
@@ -94,12 +98,35 @@ function renderHero() {
   const hero = $('hero');
   const d = devices.find((x) => x.handle === selected);
   const r = d && run[d.handle];
-  const key = d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : ''].join('|') : 'none';
+  const key = !adb.found ? 'adb|' + (guideOs || adb.os)
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
+  const tok = (heroTok = {});
+  const alive = () => heroTok === tok;
 
+  if (!adb.found) {
+    const os = guideOs || adb.os;
+    hero.innerHTML = Guide.adbCard(os, adb.os);
+    const redraw = (o) => { guideOs = o; heroKey = ''; renderHero(); };
+    Guide.wire(hero, redraw);
+    return;
+  }
   if (!d) {
-    hero.innerHTML = `<div class="radar"><b></b><b></b><b></b>${PHONE}</div><h2>Plug in a device</h2><p class="msg">Connect an Android device with a USB cable and tap “Allow USB debugging”. It appears here by itself.</p>`;
+    hero.innerHTML = `<div class="split"><div class="chk">
+      <div class="ct">Let’s connect your first device</div>
+      <div class="cs2">Three quick things. The first ticks itself.</div>
+      <div class="cs ok" data-i="0"><div class="n">${CHECK}</div><div><b>Computer is ready</b><span>adb found${adb.version ? ' · ' + esc(adb.version.replace(/^Android Debug Bridge version /, '')) : ''}</span></div></div>
+      <div class="cs" data-i="1"><div class="n">2</div><div><b>Turn on USB debugging</b><span>Tap Build number 7 times, then switch on USB debugging.</span></div></div>
+      <div class="cs" data-i="2"><div class="n">3</div><div><b>Plug in and tap Allow</b><span>Use a data cable. The phone asks once: tap Allow.</span></div></div>
+      </div><div class="pcol"><div class="ph-slot"></div><div class="cap"></div></div></div><div class="tipslot"></div>`;
+    const cs = [...hero.querySelectorAll('.cs')], slot = hero.querySelector('.ph-slot'), cap = hero.querySelector('.cap');
+    Guide.loop(slot, alive, (sc) => {
+      cap.textContent = Guide.CAP[sc];
+      cs[1].classList.toggle('on', sc !== 'allow');
+      cs[2].classList.toggle('on', sc === 'allow');
+    });
+    tipShown = false;
     return;
   }
   const head = `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
@@ -117,7 +144,8 @@ function renderHero() {
   } else if (d.status === 'blocked') {
     hero.innerHTML = `${head}<div class="fix">${esc(d.note)}<br>Then plug it in again.</div>`;
   } else if (d.status === 'unauthorized') {
-    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">Look at the device screen and tap <b>Allow</b> on the USB debugging prompt.</p>`;
+    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">Look at the device screen and tap <b>Allow</b> on the USB debugging prompt.</p><div class="ph-slot" style="margin-top:8px"></div>`;
+    Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
   } else if (d.status === 'ready') {
     const cls = classOf(d.handle);
     const err = r?.error ? `<div class="fix shake">${esc(r.error)}</div>` : '';
@@ -131,7 +159,16 @@ function renderHero() {
 
 function refresh() { renderRail(); renderHero(); }
 
+async function retryAdb(btn) {
+  if (btn) btn.innerHTML = '<span class="spin"></span> Checking…';
+  adb = await invoke('adb_status', { retry: true });
+  heroKey = ''; refresh(); tick();
+}
+
 $('hero').addEventListener('click', async (e) => {
+  const retry = e.target.closest('[data-retry]');
+  if (retry) return retryAdb(retry);
+  if (e.target.closest('[data-openhelp]')) { e.preventDefault(); return openHelp('tr'); }
   const d = devices.find((x) => x.handle === selected);
   if (!d) return;
   const chip = e.target.closest('[data-c]');
@@ -179,6 +216,8 @@ async function tick() {
   if (polling) return;
   polling = true;
   try {
+    adb = await invoke('adb_status', { retry: false });
+    if (!adb.found) { devices = []; selected = null; refresh(); $('foot').textContent = 'adb not found'; return; }
     const next = await invoke('list_devices');
     // A device the UI is mid-enroll on stays "enrolling" even if adb blips.
     next.forEach((d) => { if (run[d.handle] && run[d.handle].step !== undefined && !run[d.handle].done && !run[d.handle].error && d.status === 'ready') d.status = 'enrolling'; });
@@ -188,11 +227,57 @@ async function tick() {
     }
     $('foot').textContent = 'Watching for devices';
     refresh();
+    nudge();
   } catch (err) {
     if (String(err) === 'signed-out') return goSignIn('Session expired. Sign in again.');
     $('foot').textContent = String(err);
   } finally { polling = false; }
 }
+
+// Nothing seen for 10 s: bob the "?" and show a tip. Never nags once a device appears.
+function nudge() {
+  if (devices.length || !adb.found) { emptySince = 0; $('helpBtn').classList.remove('hint'); return; }
+  if (!emptySince) emptySince = Date.now();
+  if (!tipShown && Date.now() - emptySince > 10000) {
+    const slot = document.querySelector('#hero .tipslot');
+    if (!slot) return;
+    tipShown = true;
+    $('helpBtn').classList.add('hint');
+    slot.innerHTML = `<div class="tip">${Guide.I.cable}<span><b>Nothing seen yet.</b> Try another cable — some only charge. <a data-openhelp>Open help</a></span></div>`;
+  }
+}
+
+let helpTab = 'phone', helpTok = {};
+function openHelp(tab) {
+  if (tab) helpTab = tab;
+  $('drawer').classList.add('open');
+  $('helpBtn').classList.remove('hint');
+  drawTab();
+}
+function closeHelp() { $('drawer').classList.remove('open'); helpTok = {}; }
+function drawTab() {
+  const body = $('drawerBody'), tok = (helpTok = {});
+  const alive = () => helpTok === tok && $('drawer').classList.contains('open') && helpTab === 'phone';
+  document.querySelectorAll('#drawer .dt button').forEach((b) => b.classList.toggle('on', b.dataset.t === helpTab));
+  if (helpTab === 'phone') {
+    body.innerHTML = `<div class="pcol"><div class="ph-slot"></div><div class="cap"></div></div>
+      <ol><li>Settings → About phone → tap <b>Build number</b> 7 times.</li><li>Settings → Developer options → <b>USB debugging</b> on.</li><li>Plug in, tap <b>Allow</b>.</li></ol>`;
+    const cap = body.querySelector('.cap');
+    Guide.loop(body.querySelector('.ph-slot'), alive, (sc) => { cap.textContent = Guide.CAP[sc]; });
+  } else if (helpTab === 'pc') {
+    const os = guideOs || adb.os;
+    const status = adb.found ? `<p style="margin:0 0 8px;color:var(--ok);font-weight:700">adb found ✓ <span class="mono" style="font-weight:400;color:var(--muted)">${esc(adb.path || '')}</span></p>` : '<p style="margin:0 0 8px;color:var(--warn);font-weight:700">adb was not found</p>';
+    body.innerHTML = status + Guide.guideHTML(os, adb.os) + '<button class="cc-btn primary sm" data-retry style="margin-top:10px">↻ Retry</button>';
+    Guide.wire(body, (o) => { guideOs = o; drawTab(); });
+    body.querySelector('[data-retry]').onclick = async (e) => { await retryAdb(e.currentTarget); drawTab(); };
+  } else {
+    body.innerHTML = Guide.troubleHTML;
+  }
+}
+$('helpBtn').addEventListener('click', () => ($('drawer').classList.contains('open') ? closeHelp() : openHelp()));
+$('drawerX').addEventListener('click', closeHelp);
+document.querySelectorAll('#drawer .dt button').forEach((b) => b.addEventListener('click', () => { helpTab = b.dataset.t; drawTab(); }));
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(); });
 
 function showWho(name, avatar) {
   $('whoName').textContent = name;

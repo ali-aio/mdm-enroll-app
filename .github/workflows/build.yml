@@ -1,7 +1,7 @@
 name: Build
 
 # Builds the AIO Enroll desktop app for macOS, Windows and Linux.
-# Unsigned: see tools/enroll-app/README.md for the first-open steps. Manual only, so a
+# Unsigned: see README.md for the first-open steps. Manual only, so a
 # push never produces release artifacts by itself.
 on:
   workflow_dispatch:
