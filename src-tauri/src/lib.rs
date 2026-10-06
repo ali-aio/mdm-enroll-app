@@ -563,6 +563,16 @@ async fn wifi_pair(app: AppHandle, addr: String, code: String) -> Result<String,
 }
 
 #[tauri::command]
+async fn wifi_pair_connect(app: AppHandle, addr: String, code: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        adb_of(&app, &st)?.patient(25).pair_and_connect(addr.trim(), code.trim())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn wifi_connect(app: AppHandle, addr: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<State>();
@@ -626,7 +636,7 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, profile, last_login])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

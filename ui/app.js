@@ -157,23 +157,14 @@ function renderFound() {
   if (!list.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<div class="nb-grp ${nearOpen ? 'open' : ''}">
     <button class="nb-head" data-grp aria-expanded="${nearOpen}">${ICON.wifi.replace('class="ic"', 'class="ic nb-wifi"')}<span>Nearby phones</span><span class="nb-badge ${grew ? 'new' : ''}">${list.length}</span><span class="nb-chev">${CHEV}</span></button>
-    <div class="nb-list">${list.map((f, i) => `<div class="nb-row" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr)}</span></div><button class="nb-go" data-go>Connect</button></div>`).join('')}</div></div>`;
+    <div class="nb-list">${list.map((f, i) => `<div class="nb-row" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr)}</span></div><button class="nb-go" data-go>Pair</button></div>`).join('')}</div></div>`;
 }
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
-  const btn = e.target.closest('[data-go]');
-  if (!btn) return;
-  const row = btn.closest('.nb-row'), addr = row.dataset.addr;
-  unignore(addr.split(':')[0]);
-  btn.disabled = true; btn.style.opacity = 1; btn.innerHTML = '<span class="spin"></span>';
-  try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; await tick(); discover(); }
-  catch (err) {
-    btn.disabled = false; btn.textContent = 'Retry';
-    const sub = row.querySelector('.mono');
-    sub.textContent = 'Not paired yet — use Add over Wi-Fi';
-    sub.style.color = 'var(--danger)';
-  }
+  if (e.target.closest('[data-go]')) openPair();
 });
+
+function openPair() { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); }
 
 function renderSaved() {
   const box = $('saved');
@@ -185,7 +176,7 @@ function renderSaved() {
   box.dataset.sig = sig;
   box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => {
     const where = [p.host, p.android ? 'Android ' + p.android : ''].filter(Boolean).join(' · ');
-    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span>${p.serial ? `<span class="svd mono" title="Serial number">S/N ${esc(p.serial)}</span>` : ''}<span class="svd mono">${esc(where)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
+    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span>${p.serial ? `<span class="svd mono" title="Serial number">S/N ${esc(p.serial)}</span>` : ''}<span class="svd mono">${esc(where)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Pair again</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
   }).join('') : '';
 }
 $('saved').addEventListener('click', async (e) => {
@@ -198,18 +189,7 @@ $('saved').addEventListener('click', async (e) => {
     delete $('saved').dataset.sig;      // an empty list has the same signature as before; force the redraw
     return renderSaved();
   }
-  const btn = e.target.closest('[data-re]');
-  if (!btn) return;
-  unignore(host);
-  btn.innerHTML = '<span class="spin"></span>';
-  // Ports change, so look up the phone's current one before trying.
-  let addr = '';
-  try { addr = ((await invoke('wifi_discover')).find((s) => s.kind === 'connect' && s.addr.startsWith(host + ':')) || {}).addr || ''; } catch {}
-  if (addr) {
-    try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; return tick(); } catch {}
-  }
-  btn.textContent = 'Connect';
-  wifiMode = true; wifiPrefill = host + ':'; heroKey = ''; refresh();
+  if (e.target.closest('[data-re]')) openPair();
 });
 $('addWifi').addEventListener('click', () => { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); });
 
@@ -277,7 +257,7 @@ function renderHero() {
   if (wifiMode) {
     hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
     Wifi.draw(hero.querySelector('.wbody'), {
-      invoke, esc, Guide, alive, prefill: wifiPrefill, devices: () => devices,
+      invoke, esc, Guide, alive, devices: () => devices,
       onConnected: (addr) => {
         const host = String(addr).split(':')[0];
         unignore(host);

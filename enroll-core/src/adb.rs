@@ -119,6 +119,11 @@ pub fn parse_wlan_ip(out: &str) -> Option<String> {
     None
 }
 
+/// The host part of `host:port`.
+pub fn host_of(addr: &str) -> &str {
+    addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr)
+}
+
 /// `host:port` where host is an IPv4 address or a plain hostname. Anything adb would
 /// treat as a flag, or a shell would, is rejected.
 pub fn valid_hostport(a: &str) -> bool {
@@ -237,6 +242,41 @@ impl Adb {
             self.run_on(handle, &["reconnect"])?;
         }
         Ok("Asked the phone again. Look at its screen and tap Allow.".into())
+    }
+
+    /// Pair with the phone's pairing code, then get connected without asking the person
+    /// anything more: many phones connect by themselves right after pairing; for the rest the
+    /// phone's own connect address (found over the network, same IP) is used. Returns the
+    /// handle the phone is now listed under.
+    pub fn pair_and_connect(&self, addr: &str, code: &str) -> Result<String, String> {
+        if !valid_hostport(addr) {
+            return Err("Enter the IP address and port exactly as the pairing screen shows them, like 192.168.1.20:37215.".into());
+        }
+        let is_net = |h: &str| is_network_handle(h);
+        let before: Vec<String> = self.devices().unwrap_or_default().into_iter().map(|d| d.handle).filter(|h| is_net(h)).collect();
+        self.pair(addr, code)?;
+        let host = host_of(addr).to_string();
+        let deadline = Instant::now() + Duration::from_secs(18);
+        let mut tried: Vec<String> = Vec::new();
+        while Instant::now() < deadline {
+            // 1. It connected by itself.
+            if let Ok(devs) = self.devices() {
+                if let Some(d) = devs.iter().find(|d| is_net(&d.handle) && !before.contains(&d.handle) && d.state != "offline") {
+                    return Ok(d.handle.clone());
+                }
+            }
+            // 2. Connect to the address the phone advertises for itself (its port changes, so look it up now).
+            for svc in self.mdns_services() {
+                if svc.kind == "connect" && host_of(&svc.addr) == host && !tried.contains(&svc.addr) {
+                    tried.push(svc.addr.clone());
+                    if self.connect(&svc.addr).is_ok() {
+                        return Ok(svc.addr);
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1000));
+        }
+        Err("Paired, but it didn't connect. Make sure the phone and this computer are on the same Wi-Fi, keep the phone awake, and try again.".into())
     }
 
     /// Restarts the adb helper: clears stuck or half-open connections.
@@ -608,6 +648,19 @@ mod tests {
         let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
         assert!(a.to_wifi("192.168.1.5:5555").unwrap_err().contains("already"));
         assert!(a.to_wifi("x; reboot").is_err());
+    }
+
+    #[test]
+    fn hosts() {
+        assert_eq!(host_of("192.168.1.20:37215"), "192.168.1.20");
+        assert_eq!(host_of("pixel.local:5555"), "pixel.local");
+        assert_eq!(host_of("nocolon"), "nocolon");
+    }
+
+    #[test]
+    fn pair_and_connect_validates_before_touching_adb() {
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
+        assert!(a.pair_and_connect("not an address", "123456").is_err());
     }
 
     #[test]
