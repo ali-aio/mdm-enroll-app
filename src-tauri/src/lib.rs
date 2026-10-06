@@ -44,6 +44,8 @@ struct DeviceRow {
     firmware_version: String,
     build: String,
     server_seen: bool,
+    server_status: String,
+    last_seen: String,
 }
 
 fn entry() -> Result<keyring::Entry, String> {
@@ -184,6 +186,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 serial: String::new(), android: String::new(), status: "offline".into(),
                 note: String::new(), class: String::new(), agent_version: String::new(),
                 firmware_version: String::new(), build: String::new(), server_seen: false,
+                server_status: String::new(), last_seen: String::new(),
             };
             match d.state.as_str() {
                 "unauthorized" => {
@@ -256,8 +259,10 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
             r.status = "enrolling".into();
         } else if r.status == "firmware" {
             if let Some(s) = statuses.get(&r.serial) {
-                r.server_seen = s.enrolled;
-                if s.enrolled {
+                r.server_seen = s.known();
+                r.server_status = s.status.clone();
+                r.last_seen = s.last_seen_at.clone().unwrap_or_default();
+                if s.known() {
                     r.class = s.class.clone();
                 }
             }

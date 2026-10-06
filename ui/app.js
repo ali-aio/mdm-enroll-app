@@ -138,7 +138,7 @@ function renderHero() {
   const r = d && run[d.handle];
   const key = !adb.found ? 'adb|' + (guideOs || adb.os)
     : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : ''].join('|') : 'empty';
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
   const tok = (heroTok = {});
@@ -196,9 +196,17 @@ function renderHero() {
     if (r) r.done = false;
     heroKey = [d.handle, d.status, classOf(d.handle), '', ''].join('|');
   } else if (d.status === 'firmware') {
+    const ago = (iso) => {
+      const t = Date.parse(iso); if (!t) return '';
+      const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+      return m < 2 ? 'just now' : m < 90 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago';
+    };
+    const gone = d.server_status === 'retired' || d.server_status === 'wiped';
     const seen = d.server_seen
-      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}. Nothing to do here.</div>`
-      : '<div class="wmsg" style="background:var(--surface-3)">Not seen by the MDM yet. It enrolls itself the first time it checks in over the network, so make sure it has internet.</div>';
+      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}${d.last_seen ? ' · last check-in ' + esc(ago(d.last_seen)) : ''}. Nothing to do here.</div>`
+      : gone
+        ? `<div class="wmsg bad">The MDM has this device marked <b>${esc(d.server_status)}</b>. Restore it from the dashboard if it should be active.</div>`
+        : '<div class="wmsg" style="background:var(--surface-3)">Not seen by the MDM yet. It enrolls itself the first time it checks in over the network, so make sure it has internet.</div>';
     hero.innerHTML = `${head}<div class="okbig" style="margin-top:6px">${CHECK}</div><h2 style="margin-top:6px">Already runs AIO MDM firmware</h2>
       <div class="mono" style="color:var(--muted)">MDM client ${esc(d.firmware_version || '—')}${d.build ? ' · build ' + esc(d.build) : ''}</div>
       <div class="amsg" style="margin-top:4px">${seen}</div>

@@ -24,6 +24,17 @@ pub struct Status {
     pub class: String,
     #[serde(default)]
     pub agent_version: String,
+    #[serde(default)]
+    pub last_seen_at: Option<String>,
+}
+
+impl Status {
+    /// The MDM knows this device and has not retired or wiped it. Firmware devices register
+    /// themselves with status `auto` (not `enrolled`), so `enrolled` alone misses them.
+    /// A serial the server has never seen comes back with an empty status.
+    pub fn known(&self) -> bool {
+        !self.status.is_empty() && self.status != "retired" && self.status != "wiped"
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -201,6 +212,16 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmware_devices_registered_as_auto_are_known() {
+        let auto: Status = serde_json::from_str(r#"{"enrolled":false,"status":"auto","class":"t7","last_seen_at":"2026-10-06T10:00:00Z"}"#).unwrap();
+        assert!(auto.known() && !auto.enrolled);
+        let unseen: Status = serde_json::from_str(r#"{"enrolled":false}"#).unwrap();
+        assert!(!unseen.known());
+        let gone: Status = serde_json::from_str(r#"{"enrolled":false,"status":"retired"}"#).unwrap();
+        assert!(!gone.known());
+    }
 
     #[test]
     fn server_urls() {
