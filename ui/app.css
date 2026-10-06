@@ -255,3 +255,10 @@ form.working input{opacity:.6;pointer-events:none;}
    under the app's zoom). Pad it inward and pull it back out so layout stays put. */
 .railwrap{padding:3px;margin:-3px;}
 .hero{overflow-x:hidden;}
+
+/* popup buttons: centred labels, equal size, a clearly-disabled state instead of a muddy accent */
+.pm-btns{gap:10px;margin-top:10px;}
+.pm-btns .cc-btn{flex:1;min-height:42px;padding:0 16px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;gap:8px;text-align:center;font-size:13.5px;font-weight:700;}
+.pm-btns .cc-btn.primary:disabled{background:var(--surface-3);border-color:var(--border);color:var(--muted);opacity:1;cursor:not-allowed;box-shadow:none;}
+.pm-btns .cc-btn.primary:not(:disabled){box-shadow:0 6px 16px rgba(249,103,78,.28);}
+.pm-btns .cc-btn.primary .spin{border-color:rgba(255,255,255,.4);border-top-color:#fff;}
