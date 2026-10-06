@@ -136,6 +136,8 @@ fn me(app: AppHandle, state: tauri::State<State>) -> Option<Me> {
 
 #[tauri::command]
 async fn sign_in(app: AppHandle, state: tauri::State<'_, State>, server: String, username: String, password: String) -> Result<Me, String> {
+    // Live unless AIO_MDM_SERVER says otherwise (for testing against stage); there is no field for it.
+    let server = if server.trim().is_empty() { std::env::var("AIO_MDM_SERVER").unwrap_or_default() } else { server };
     let s = tauri::async_runtime::spawn_blocking(move || api::login(&server, &username, &password))
         .await
         .map_err(|e| e.to_string())?

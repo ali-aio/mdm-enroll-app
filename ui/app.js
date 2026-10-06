@@ -395,7 +395,7 @@ async function goSignIn(msg = '') {
   clearInterval(timer);
   try {
     const l = await invoke('last_login');
-    if (l) { if (!$('u').value) $('u').value = l.username || ''; if (l.server && l.server !== 'https://mdm.dev.aioapp.com' && !$('srv').value) $('srv').value = l.server; }
+    if (l && !$('u').value) $('u').value = l.username || '';
   } catch {}
   $('signinErr').textContent = msg; $('p').value = '';
   $('app').hidden = true; $('signin').hidden = false;
@@ -405,7 +405,7 @@ async function goSignIn(msg = '') {
 $('signinForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('signinBtn').disabled = true; $('signinErr').textContent = '';
-  try { goApp(await invoke('sign_in', { server: $('srv').value, username: $('u').value, password: $('p').value })); }
+  try { goApp(await invoke('sign_in', { server: '', username: $('u').value, password: $('p').value })); }
   catch (err) { $('signinErr').textContent = String(err); }
   $('signinBtn').disabled = false;
 });

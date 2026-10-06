@@ -10,7 +10,7 @@ machine only: no SSH, no Tailscale. adb is bundled.
 - UI designs and demos live in the MDM repo, `static/enroll-app-*-demos.html`
 
 ## Server side
-Signs in through `POST /api/v1/app/login` (dashboard account; roles admin, dev, user_manager,
+Signs in to live (mdm.dev.aioapp.com) — set AIO_MDM_SERVER to test against another server. Signs in through `POST /api/v1/app/login` (dashboard account; roles admin, dev, user_manager,
 super_op, operator) and uses `GET /api/v1/app/enroll-status` and `POST /api/v1/app/enroll-token`.
 No admin key and no class tokens ship in the app.
 
