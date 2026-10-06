@@ -38,11 +38,13 @@ applyTheme(); mq.addEventListener('change', applyTheme);
 const UA = navigator.platform || navigator.userAgent || '';
 document.documentElement.dataset.os = /Mac/i.test(UA) ? 'mac' : /Win/i.test(UA) ? 'win' : 'linux';
 
-// A Mac app does not grow its text with the window; people can still nudge the size with
-// Cmd/Ctrl + / - / 0, and the nudge is remembered.
+// Size: see applyZoom. People can nudge it with Cmd/Ctrl + / - / 0; the nudge is remembered.
 let userZoom = parseFloat(store.get('zoom', '1')) || 1;
 function applyZoom() {
-  const auto = 1;
+  // macOS: native size (the system already scales for Retina). Linux/Windows: grow with the window,
+  // so a maximised window on a big screen is not a small app in a sea of space.
+  const auto = document.documentElement.dataset.os === 'mac' ? 1
+    : Math.min(1.5, Math.max(1, Math.min(window.innerWidth / 1000, window.innerHeight / 700)));
   document.documentElement.style.zoom = String(+(auto * userZoom).toFixed(3));
 }
 window.addEventListener('resize', applyZoom);
