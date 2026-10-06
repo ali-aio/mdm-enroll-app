@@ -206,3 +206,21 @@ form.working input{opacity:.6;pointer-events:none;}
 .ibtn:hover::after,.ibtn:focus-visible::after{opacity:1;}
 .hpop{position:absolute;left:0;right:0;margin:0 auto;top:210px;width:min(300px,86%);background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 34px rgba(20,22,40,.28);padding:12px 14px;text-align:left;font-size:12px;line-height:1.55;z-index:6;animation:pop .22s both;}
 .hpop ol{margin:4px 0 0;padding-left:18px;}
+
+/* Enroll button as wide as the class pills above it */
+.classbox{display:inline-flex;flex-direction:column;align-items:stretch;gap:10px;margin-top:6px;max-width:100%;}
+.classbox .chips{flex-wrap:nowrap;justify-content:stretch;margin:0;}
+.classbox .chips button{flex:1;}
+.classbox .bigbtn{width:100%;padding-left:0;padding-right:0;}
+
+/* actions strip (option A) */
+.tools{width:100%;margin-top:18px;}
+.tools .sep{border-top:1px solid var(--border-soft);margin:0 0 8px;}
+.tools .foot{display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;}
+.qb{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:600;padding:6px 10px;border-radius:8px;cursor:pointer;transition:background .15s,color .15s;}
+.qb .ic{width:14px;height:14px;}
+.qb:hover,.qb:focus-visible{background:var(--surface2);color:var(--text);}
+.qb.danger:hover,.qb.danger:focus-visible{background:var(--danger-bg);color:var(--danger);}
+.qb:disabled{opacity:.6;cursor:default;}
+.okline{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--ok);}
+.okline .ic{width:14px;height:14px;}

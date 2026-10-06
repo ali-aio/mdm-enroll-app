@@ -126,18 +126,13 @@ function learnPhones() {
 
 // ---- Phones found on the network (Wireless debugging is on) ----
 let found = [];            // [{ name, addr }]
-const foundSeen = new Map();
 let discTimer = null, discBusy = false;
 async function discover() {
   if (discBusy || !adb.found || $('app').hidden) return;
   discBusy = true;
   try {
     const svcs = await invoke('wifi_discover');
-    const now = Date.now();
-    svcs.filter((x) => x.kind === 'connect').forEach((s) => foundSeen.set(s.addr, { s, t: now }));
-    // Announcements flicker between scans: keep a phone listed for 8 s after it was last seen.
-    for (const [addr, v] of foundSeen) if (now - v.t > 8000) foundSeen.delete(addr);
-    found = [...foundSeen.values()].map((v) => v.s);
+    found = svcs.filter((x) => x.kind === 'connect');
     renderFound();
   } catch {} finally { discBusy = false; }
 }
@@ -299,7 +294,6 @@ function renderHero() {
   const chipRow = (...extra) => `<div class="pchips">${d.android ? chip('', 'Android ' + esc(d.android)) : ''}${connChip}${extra.join('')}</div>`;
   const head = (...extra) => `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
     <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}</div>${chipRow(...extra)}`;
-  const ibtn = (attrs, tip, icon) => `<button class="ibtn" ${attrs} data-tip="${esc(tip)}" aria-label="${esc(tip)}">${icon}</button>`;
 
   if (d.status === 'enrolling') {
     hero.innerHTML = `<div class="bigph">${iconOf(d)}</div><h2>Enrolling ${esc(d.name)}…</h2><div data-tl="${esc(d.handle)}">${timeline(r?.step ?? 0)}</div>`;
@@ -331,20 +325,20 @@ function renderHero() {
   } else if (d.status === 'ready') {
     const cls = classOf(d.handle);
     const err = r?.error ? `<div class="fix shake">${esc(r.error)}</div>` : '';
-    hero.innerHTML = `${head()}<div class="chips" style="margin-top:6px">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
-      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button>${err}`;
+    hero.innerHTML = `${head()}<div class="classbox"><div class="chips">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
+      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button></div>${err}`;
   } else {
     hero.innerHTML = head(chip('warn', esc(String(d.note || d.status).split('.')[0])));
   }
 
-  // Occasional actions as icon buttons. Wi-Fi switch for a cable-only phone; "OK to unplug" +
-  // forget-the-Wi-Fi-link when it is on both; plain forget for a Wi-Fi-only phone.
+  // Occasional actions: a quiet strip of labelled buttons (no mystery icons, no tooltips).
   if (d.status !== 'enrolling' && !hero.querySelector('.towifi')) {
-    let btns = '';
-    if (d.hasUsb && d.wifiHandle) btns = chip('ok', 'OK to unplug') + ibtn(`data-forget data-h="${esc(d.wifiHandle)}"`, 'Forget the Wi-Fi link', ICON.x);
-    else if (isNet(d)) btns = ibtn('data-forget', 'Forget (stays enrolled in the MDM)', ICON.x);
-    else if (['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status)) btns = ibtn('data-towifi', 'Switch to Wi-Fi (no pairing needed)', ICON.wifi);
-    hero.insertAdjacentHTML('beforeend', `${btns ? `<div class="acts2">${btns}</div>` : ''}<div class="amsg towifi"></div>`);
+    const qb = (attrs, icon, label, cls = '', tip = '') => `<button class="qb ${cls}" ${attrs}${tip ? ` title="${esc(tip)}"` : ''}>${icon}${label}</button>`;
+    let parts = '';
+    if (d.hasUsb && d.wifiHandle) parts = `<span class="okline">${ICON.check} OK to unplug the cable</span>` + qb(`data-forget data-h="${esc(d.wifiHandle)}"`, ICON.wifi, 'Forget Wi-Fi link', 'danger', 'Disconnects the Wi-Fi link only. The USB connection stays.');
+    else if (isNet(d)) parts = qb('data-forget', ICON.x, 'Forget device', 'danger', 'Disconnects it from this computer. It stays enrolled in the MDM.');
+    else if (['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status)) parts = qb('data-towifi', ICON.wifi, 'Switch to Wi-Fi', '', 'No pairing needed. Reads the phone\u2019s IP over the cable and connects to it.');
+    hero.insertAdjacentHTML('beforeend', `${parts ? `<div class="tools"><div class="sep"></div><div class="foot">${parts}</div></div>` : ''}<div class="amsg towifi"></div>`);
   }
 }
 
@@ -372,11 +366,11 @@ $('hero').addEventListener('click', async (e) => {
   const sw = e.target.closest('[data-towifi]');
   if (sw) {
     const label = sw.innerHTML, msg = document.querySelector('#hero .towifi');
-    sw.disabled = true; sw.innerHTML = '<span class="spin"></span>';
+    sw.disabled = true; sw.innerHTML = '<span class="spin"></span> Switching…';
     try {
       const m = await invoke('device_to_wifi', { handle: d.handle });
       msg.innerHTML = `<div class="wmsg ok" style="font-size:12px">${esc(m)}</div>`;
-      sw.innerHTML = ICON.check;
+      sw.innerHTML = ICON.check + 'On Wi-Fi';
       setTimeout(() => { heroKey = ''; tick(); }, 800);
     } catch (err) {
       msg.innerHTML = `<div class="wmsg bad" style="font-size:12px">${esc(err)}</div>`;
@@ -387,7 +381,7 @@ $('hero').addEventListener('click', async (e) => {
   const act = e.target.closest('[data-reprompt],[data-forget]');
   if (act) {
     const forget = act.hasAttribute('data-forget'), label = act.innerHTML, msg = hero_amsg();
-    act.disabled = true; act.innerHTML = act.classList.contains('ibtn') ? '<span class="spin"></span>' : '<span class="spin"></span> Working…';
+    act.disabled = true; act.innerHTML = '<span class="spin"></span> Working…';
     try {
       const target = act.dataset.h || d.handle;
       const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: target });
@@ -568,7 +562,7 @@ function showForm(username = '', msg = '', canGoBack = false) {
 }
 
 async function goSignIn(msg = '') {
-  clearInterval(timer); clearInterval(discTimer); found = []; foundSeen.clear();
+  clearInterval(timer); clearInterval(discTimer); found = [];
   let list = [];
   try { list = await invoke('accounts'); } catch {}
   if (!list.length) return showForm('', msg, false);

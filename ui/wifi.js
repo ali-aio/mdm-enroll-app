@@ -106,26 +106,20 @@ const Wifi = (() => {
         }).join('');
       list.querySelectorAll('[data-addr]').forEach((b) => { b.onclick = () => { if (busy) return; chosen = b.dataset.addr; detected = chosen; sig = ''; drawPairings(); syncEnable(); pc.focus(); }; });
     }
-    // Network announcements come and go between scans (and a scan can fail), which made the row
-    // flash. So a pairing screen stays listed for a few seconds after it was last seen, and a failed
-    // scan changes nothing.
-    const seenAt = new Map();            // addr -> { svc, t }
-    const KEEP_MS = 7000;
     (async () => {
       while (alive()) {
         let svcs = null;
         try { svcs = await invoke('wifi_discover'); } catch {}
         if (!alive()) return;
-        const now = Date.now();
-        if (svcs) svcs.filter((x) => x.kind === 'pairing').forEach((s) => seenAt.set(s.addr, { svc: s, t: now }));
-        for (const [addr, v] of seenAt) if (now - v.t > KEEP_MS) seenAt.delete(addr);
-        pairings = [...seenAt.values()].map((v) => v.svc);
-        if (pairings.length === 1) chosen = pairings[0].addr;               // only one: no choice to make
-        else if (!pairings.some((p) => p.addr === chosen)) chosen = '';     // the chosen one went away
-        detected = chosen;
-        drawPairings();
-        if (!busy) syncEnable();
-        if (chosen && !cs[2].classList.contains('on') && !done[2]) { done[0] = done[1] = true; show(2); }
+        if (svcs) {                                   // a failed scan changes nothing; a real one is shown as is
+          pairings = svcs.filter((x) => x.kind === 'pairing');
+          if (pairings.length === 1) chosen = pairings[0].addr;               // only one: no choice to make
+          else if (!pairings.some((p) => p.addr === chosen)) chosen = '';     // the chosen one went away
+          detected = chosen;
+          drawPairings();
+          if (!busy) syncEnable();
+          if (chosen && !cs[2].classList.contains('on') && !done[2]) { done[0] = done[1] = true; show(2); }
+        }
         await Guide.sleep(2000);
       }
     })();
