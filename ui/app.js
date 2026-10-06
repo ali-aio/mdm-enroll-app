@@ -126,13 +126,18 @@ function learnPhones() {
 
 // ---- Phones found on the network (Wireless debugging is on) ----
 let found = [];            // [{ name, addr }]
+const foundSeen = new Map();
 let discTimer = null, discBusy = false;
 async function discover() {
   if (discBusy || !adb.found || $('app').hidden) return;
   discBusy = true;
   try {
     const svcs = await invoke('wifi_discover');
-    found = svcs.filter((x) => x.kind === 'connect');
+    const now = Date.now();
+    svcs.filter((x) => x.kind === 'connect').forEach((s) => foundSeen.set(s.addr, { s, t: now }));
+    // Announcements flicker between scans: keep a phone listed for 8 s after it was last seen.
+    for (const [addr, v] of foundSeen) if (now - v.t > 8000) foundSeen.delete(addr);
+    found = [...foundSeen.values()].map((v) => v.s);
     renderFound();
   } catch {} finally { discBusy = false; }
 }
@@ -563,7 +568,7 @@ function showForm(username = '', msg = '', canGoBack = false) {
 }
 
 async function goSignIn(msg = '') {
-  clearInterval(timer); clearInterval(discTimer); found = [];
+  clearInterval(timer); clearInterval(discTimer); found = []; foundSeen.clear();
   let list = [];
   try { list = await invoke('accounts'); } catch {}
   if (!list.length) return showForm('', msg, false);

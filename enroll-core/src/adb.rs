@@ -651,6 +651,21 @@ mod tests {
     }
 
     #[test]
+    fn real_discovery_output_from_a_phone_in_pairing_mode() {
+        // Captured from a T7 with "Pair device with pairing code" open, plus other phones around.
+        let out = "List of discovered mdns services\n\
+            adb-AT070AA2600030-KLVymJ\t_adb-tls-connect._tcp\t10.32.0.113:43213\n\
+            adb-AT070AABU00875\t_adb._tcp\t10.32.2.167:5555\n\
+            adb-18121FDF60022T-fbnpOu\t_adb-tls-pairing._tcp\t10.32.2.210:33717\n\
+            adb-AT070AA2600030-KLVymJ\t_adb-tls-pairing._tcp\t10.32.0.113:37971\n";
+        let v = parse_mdns(out);
+        let pairing: Vec<_> = v.iter().filter(|s| s.kind == "pairing").collect();
+        assert_eq!(pairing.len(), 2);
+        assert!(pairing.iter().any(|s| s.addr == "10.32.0.113:37971"));
+        assert_eq!(v.iter().filter(|s| s.kind == "connect").count(), 1); // plain _adb._tcp lines are ignored
+    }
+
+    #[test]
     fn hosts() {
         assert_eq!(host_of("192.168.1.20:37215"), "192.168.1.20");
         assert_eq!(host_of("pixel.local:5555"), "pixel.local");
