@@ -507,6 +507,8 @@ document.addEventListener('click', (e) => {
 
 function refresh() { renderRail(); renderHero(); }
 
+// Every Wi-Fi connection a phone currently has (an entry may stand for several).
+const wifiHandlesOf = (d) => { const w = (d.conns || []).filter((c) => c.kind === 'wifi').map((c) => c.handle); return w.length ? w : isNet(d) ? [d.handle] : []; };
 const hero_amsg = () => document.querySelector('#hero .amsg');
 
 async function retryAdb(btn) {
@@ -542,11 +544,25 @@ $('hero').addEventListener('click', async (e) => {
     const forget = act.hasAttribute('data-forget'), label = act.innerHTML, msg = hero_amsg();
     act.disabled = true; act.innerHTML = '<span class="spin"></span> Working…';
     try {
-      const target = act.dataset.h || d.handle;
-      const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: target });
-      if (msg) msg.innerHTML = `<div class="wmsg ok">${esc(m)}</div>`;
-      if (forget && target === d.handle) { selected = null; heroKey = ''; devices = devices.filter((x) => x.handle !== d.handle); refresh(); }
-      else if (forget) { heroKey = ''; }
+      if (forget) {
+        // A phone is often connected several ways at once (ip:5555, the Wireless-debugging port, the
+        // discovery name). Forgetting only the one in use left the others, so it popped straight back.
+        const handles = wifiHandlesOf(d);
+        const res = await Promise.allSettled(handles.map((h) => invoke('device_forget', { handle: h })));
+        const bad = res.filter((r) => r.status === 'rejected').map((r) => String(r.reason));
+        const okN = res.length - bad.length;
+        if (msg) msg.innerHTML = bad.length
+          ? `<div class="wmsg bad">${okN ? `Disconnected ${okN} of ${res.length}. ` : ''}${esc(bad[0])}</div>`
+          : `<div class="wmsg ok">${res.length > 1 ? `Disconnected all ${res.length} Wi-Fi connections.` : 'Disconnected.'}</div>`;
+        if (okN) {
+          rawDevices = rawDevices.filter((x) => !handles.includes(x.handle));
+          if (!d.hasUsb) { selected = null; devices = devices.filter((x) => x.handle !== d.handle); }
+          heroKey = ''; refresh();
+        }
+      } else {
+        const m = await invoke('device_reprompt', { handle: d.handle });
+        if (msg) msg.innerHTML = `<div class="wmsg ok">${esc(m)}</div>`;
+      }
     } catch (err) {
       if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
     }
