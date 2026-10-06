@@ -130,7 +130,10 @@ async function discover() {
     renderFound();
   } catch {} finally { discBusy = false; }
 }
-const isConnected = (f) => rawDevices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name));
+// A phone is already connected if any connection has the same address, the same discovery name, or
+// the same IP: one phone has several ports (5555 after "Switch to Wi-Fi", another for Wireless debugging).
+const hostOf = (a) => (a.includes(':') ? a.slice(0, a.lastIndexOf(':')) : '');
+const isConnected = (f) => rawDevices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name) || (hostOf(x.handle) && hostOf(x.handle) === hostOf(f.addr)));
 
 let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
 const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
