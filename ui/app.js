@@ -86,13 +86,33 @@ const connKind = (h) => (h.includes(':') || h.includes('._adb-tls-') ? 'wifi' : 
 // Merge them by serial into one entry; actions go through the cable while it is in.
 function mergeDevices(rows) {
   const rank = (h) => (connKind(h) === 'usb' ? 0 : h.includes(':') ? 1 : 2);
+  // How to tell two connections are one phone when a sleeping phone won't say its serial:
+  //  - an adb-<SERIAL>-xxxxxx._adb-tls-… name carries the serial in the name itself;
+  //  - the discovery list maps such a name to the phone's IP;
+  //  - one phone has one IP, whatever port a connection uses.
+  const nameSerial = (h) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}\._adb-tls-/.exec(h); return m ? m[1] : ''; };
+  const hostOfHandle = (h) => {
+    if (h.includes('._adb-tls-')) { const f = found.find((x) => h.startsWith(x.name)); return f ? hostOf(f.addr) : ''; }
+    return h.includes(':') ? hostOf(h) : '';
+  };
+  const hostSerial = new Map();                       // IP -> serial, from every connection that knows both
+  rows.forEach((d) => { const h = hostOfHandle(d.handle), s = d.serial || nameSerial(d.handle); if (h && s) hostSerial.set(h, s); });
+  const keyOf = (d) => {
+    if (d.adb_state !== 'device') return '';
+    const h = hostOfHandle(d.handle);
+    const s = d.serial || nameSerial(d.handle) || (h && hostSerial.get(h)) || '';
+    return s ? 's:' + s : h ? 'h:' + h : '';
+  };
   const by = new Map(), out = [];
   rows.forEach((d) => {
-    if (!d.serial || d.adb_state !== 'device') { out.push({ ...d, conns: [{ handle: d.handle, kind: connKind(d.handle) }] }); return; }
-    const g = by.get(d.serial);
-    if (!g) { const m = { ...d, conns: [{ handle: d.handle, kind: connKind(d.handle) }] }; by.set(d.serial, m); out.push(m); return; }
-    const conns = [...g.conns, { handle: d.handle, kind: connKind(d.handle) }];
-    if (rank(d.handle) < rank(g.handle)) Object.assign(g, d);
+    const k = keyOf(d), conn = { handle: d.handle, kind: connKind(d.handle) };
+    if (!k) { out.push({ ...d, conns: [conn] }); return; }
+    const g = by.get(k);
+    if (!g) { const m = { ...d, conns: [conn] }; by.set(k, m); out.push(m); return; }
+    const conns = [...g.conns, conn];
+    // Prefer a connection that answers (it has the serial/details), then the cable, then ip:port.
+    const better = (d.serial && !g.serial) || (!!d.serial === !!g.serial && rank(d.handle) < rank(g.handle));
+    if (better) Object.assign(g, d);
     g.conns = conns;
   });
   out.forEach((d) => {
