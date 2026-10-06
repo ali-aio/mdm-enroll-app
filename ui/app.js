@@ -204,14 +204,9 @@ function renderHero() {
     if (r) r.done = false;
     heroKey = [d.handle, d.status, classOf(d.handle), '', ''].join('|');
   } else if (d.status === 'firmware') {
-    const ago = (iso) => {
-      const t = Date.parse(iso); if (!t) return '';
-      const m = Math.max(0, Math.round((Date.now() - t) / 60000));
-      return m < 2 ? 'just now' : m < 90 ? m + ' min ago' : m < 2880 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago';
-    };
     const gone = d.server_status === 'retired' || d.server_status === 'wiped';
     const seen = d.server_seen
-      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}${d.last_seen ? ' · last check-in ' + esc(ago(d.last_seen)) : ''}. Nothing to do here.</div>`
+      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}. Nothing to do here.</div>`
       : gone
         ? `<div class="wmsg bad">The MDM has this device marked <b>${esc(d.server_status)}</b>. Restore it from the dashboard if it should be active.</div>`
         : '<div class="wmsg" style="background:var(--surface-3)">Not seen by the MDM yet. It enrolls itself the first time it checks in over the network, so make sure it has internet.</div>';
