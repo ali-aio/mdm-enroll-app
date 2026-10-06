@@ -116,7 +116,15 @@ function renderRail() {
     }
     have.delete(d.handle);
     el.classList.toggle('on', d.handle === selected && !wifiMode);
-    el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><i class="${dotOf(d)}"></i>`;
+    // Enrolled, or firmware the MDM has registered: a tick instead of the status dot.
+    const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
+    // Only redraw when something visible changed, so the tick animates once, not on every poll.
+    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length].join('|');
+    if (el.dataset.sig !== sig) {
+      el.dataset.sig = sig;
+      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span>${
+        ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}`;
+    }
     if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
   });
   have.forEach((el) => el.remove());

@@ -104,3 +104,6 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 
 .acts{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;}
 .amsg{max-width:380px;}
+
+.ri .tick{width:18px;height:18px;border-radius:50%;background:var(--ok-bg);display:flex;align-items:center;justify-content:center;flex:none;animation:pop .35s both;}
+.ri .tick .check{width:12px;height:12px;stroke-width:3.4;}
