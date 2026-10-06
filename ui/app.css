@@ -187,3 +187,8 @@ form.working input{opacity:.6;pointer-events:none;}
 .addw.on{background:var(--accent);color:#fff;border-style:solid;border-color:var(--accent);}
 
 .sv .svd{white-space:normal;overflow-wrap:anywhere;line-height:1.35;}
+
+/* merged connections: USB + Wi-Fi in one row */
+.ri .conn{width:auto;min-width:34px;justify-content:flex-end;gap:4px;}
+.ri .conn .ic{flex:none;}
+.mergetip{margin-top:10px;background:var(--ok-bg);color:var(--ok);border-radius:10px;padding:7px 12px;font-size:12px;font-weight:600;animation:slidein .35s both;}

@@ -52,7 +52,8 @@ document.addEventListener('keydown', (e) => {
 });
 applyZoom();
 
-let devices = [];
+let devices = [];       // one entry per phone (connections merged)
+let rawDevices = [];    // one entry per adb connection
 let selected = null;           // handle
 let timer = null, polling = false;
 const picked = {};             // handle -> class chosen
@@ -74,6 +75,29 @@ const saveIgnored = () => store.set('ignored', JSON.stringify(ignoredHosts.slice
 const unignore = (host) => { if (ignoredHosts.includes(host)) { ignoredHosts = ignoredHosts.filter((h) => h !== host); saveIgnored(); } };              // cancels the phone animation when the hero is redrawn
 
 const isNet = (d) => d.handle.includes(':') || d.handle.includes('._adb-tls-');
+const connKind = (h) => (h.includes(':') || h.includes('._adb-tls-') ? 'wifi' : 'usb');
+// A phone can be on the cable and on Wi-Fi at once and adb lists each connection separately.
+// Merge them by serial into one entry; actions go through the cable while it is in.
+function mergeDevices(rows) {
+  const rank = (h) => (connKind(h) === 'usb' ? 0 : h.includes(':') ? 1 : 2);
+  const by = new Map(), out = [];
+  rows.forEach((d) => {
+    if (!d.serial || d.adb_state !== 'device') { out.push({ ...d, conns: [{ handle: d.handle, kind: connKind(d.handle) }] }); return; }
+    const g = by.get(d.serial);
+    if (!g) { const m = { ...d, conns: [{ handle: d.handle, kind: connKind(d.handle) }] }; by.set(d.serial, m); out.push(m); return; }
+    const conns = [...g.conns, { handle: d.handle, kind: connKind(d.handle) }];
+    if (rank(d.handle) < rank(g.handle)) Object.assign(g, d);
+    g.conns = conns;
+  });
+  out.forEach((d) => {
+    const w = d.conns.find((c) => c.kind === 'wifi');
+    d.wifiHandle = w ? w.handle : '';
+    d.hasUsb = d.conns.some((c) => c.kind === 'usb');
+  });
+  return out;
+}
+const connIcons = (d) => (d.hasUsb ? ICON.usb : '') + (d.wifiHandle ? ICON.wifi : '');
+const connLabel = (d) => (d.hasUsb && d.wifiHandle ? 'USB + Wi-Fi' : d.wifiHandle ? 'Wi-Fi' : 'USB');
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
@@ -82,7 +106,7 @@ const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait'
 // says what it is after it disconnects.
 function learnPhones() {
   let changed = false;
-  devices.forEach((d) => {
+  rawDevices.forEach((d) => {
     if (!d.handle.includes(':') || d.status === 'unauthorized' || d.status === 'offline') return;
     const host = d.handle.split(':')[0];
     if (ignoredHosts.includes(host)) return;
@@ -106,7 +130,7 @@ async function discover() {
     renderFound();
   } catch {} finally { discBusy = false; }
 }
-const isConnected = (f) => devices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name));
+const isConnected = (f) => rawDevices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name));
 
 let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
 const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
@@ -145,7 +169,7 @@ $('foundNet').addEventListener('click', async (e) => {
 function renderSaved() {
   const box = $('saved');
   learnPhones();
-  const online = (p) => devices.some((x) => x.handle.startsWith(p.host + ':')) || found.some((f) => f.addr.startsWith(p.host + ':'));
+  const online = (p) => rawDevices.some((x) => x.handle.startsWith(p.host + ':')) || found.some((f) => f.addr.startsWith(p.host + ':'));
   const list = savedPhones.filter((p) => !online(p));
   const sig = list.map((p) => [p.host, p.name, p.serial, p.android, p.firmware].join('~')).join('|');
   if (box.dataset.sig === sig) return;
@@ -199,10 +223,10 @@ function renderRail() {
     // Enrolled, or firmware the MDM has registered: a tick instead of the status dot.
     const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
     // Only redraw when something visible changed, so the tick animates once, not on every poll.
-    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, isNet(d)].join('|');
+    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d)].join('|');
     if (el.dataset.sig !== sig) {
       el.dataset.sig = sig;
-      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="${isNet(d) ? 'Connected over Wi-Fi' : 'Connected by USB cable'}">${isNet(d) ? ICON.wifi : ICON.usb}</span><span class="stat">${
+      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="Connected: ${connLabel(d)}">${connIcons(d)}</span><span class="stat">${
         ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
     }
     if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
@@ -273,7 +297,7 @@ function renderHero() {
     return;
   }
   const head = `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
-    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}${d.android ? ' · Android ' + esc(d.android) : ''} · ${isNet(d) ? 'Wi-Fi' : 'USB'}</div>`;
+    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}${d.android ? ' · Android ' + esc(d.android) : ''} · ${connLabel(d)}</div>`;
 
   if (d.status === 'enrolling') {
     hero.innerHTML = `<div class="bigph">${iconOf(d)}</div><h2>Enrolling ${esc(d.name)}…</h2><div data-tl="${esc(d.handle)}">${timeline(r?.step ?? 0)}</div>`;
@@ -313,9 +337,14 @@ function renderHero() {
     hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">${esc(d.note || d.status)}</p>`;
   }
   // A phone on a cable can be moved to Wi-Fi in one click: no pairing, no code.
-  if (!isNet(d) && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status) && !hero.querySelector('[data-towifi]')) {
+  if (!isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status) && !hero.querySelector('[data-towifi]')) {
     hero.insertAdjacentHTML('beforeend', `<div class="acts"><button class="cc-btn" data-towifi>${ICON.wifi.replace('class="ic"', 'class="ic" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:6px"')}Switch to Wi-Fi</button></div>
       <div class="amsg towifi" style="font-size:11px;color:var(--muted)">No pairing and no codes. Reads the phone’s IP over the cable, then connects to it. You can unplug it afterwards. It stays on Wi-Fi until the phone restarts.</div>`);
+  }
+  // On the cable AND on Wi-Fi: say so, and let the Wi-Fi link be forgotten on its own.
+  if (d.hasUsb && d.wifiHandle && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
+    hero.insertAdjacentHTML('beforeend', `<div class="mergetip">Connected by USB and Wi-Fi — you can unplug the cable.</div>
+      <div class="amsg" style="font-size:11px;color:var(--muted)">Connections: USB · <span class="mono">${esc(d.wifiHandle)}</span> <button class="cc-btn sm" data-forget data-h="${esc(d.wifiHandle)}" title="Disconnects the Wi-Fi link only">Forget Wi-Fi</button></div>`);
   }
   // Any phone connected over the network can be forgotten, whatever its state.
   if (isNet(d) && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
@@ -359,9 +388,11 @@ $('hero').addEventListener('click', async (e) => {
     const forget = act.hasAttribute('data-forget'), label = act.textContent, msg = hero_amsg();
     act.disabled = true; act.innerHTML = '<span class="spin"></span> Working…';
     try {
-      const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: d.handle });
+      const target = act.dataset.h || d.handle;
+      const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: target });
       if (msg) msg.innerHTML = `<div class="wmsg ok">${esc(m)}</div>`;
-      if (forget) { selected = null; heroKey = ''; devices = devices.filter((x) => x.handle !== d.handle); refresh(); }
+      if (forget && target === d.handle) { selected = null; heroKey = ''; devices = devices.filter((x) => x.handle !== d.handle); refresh(); }
+      else if (forget) { heroKey = ''; }
     } catch (err) {
       if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
     }
@@ -420,10 +451,13 @@ async function tick() {
     const next = await invoke('list_devices');
     // A device the UI is mid-enroll on stays "enrolling" even if adb blips.
     next.forEach((d) => { if (run[d.handle] && run[d.handle].step !== undefined && !run[d.handle].done && !run[d.handle].error && d.status === 'ready') d.status = 'enrolling'; });
-    devices = next;
+    rawDevices = next;
+    const prevSerial = (devices.find((x) => x.handle === selected) || {}).serial;
+    devices = mergeDevices(next);
     if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; }
     if (!devices.some((d) => d.handle === selected)) {
-      selected = (devices.find((d) => d.status === 'ready') || devices[0])?.handle ?? null;
+      const same = prevSerial && devices.find((x) => x.serial === prevSerial);   // e.g. the cable was unplugged
+      selected = (same || devices.find((d) => d.status === 'ready') || devices[0])?.handle ?? null;
     }
     $('foot').textContent = 'Watching for devices';
     refresh();
