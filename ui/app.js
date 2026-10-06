@@ -327,7 +327,10 @@ async function tick() {
     refresh();
     nudge();
   } catch (err) {
-    if (String(err) === 'signed-out') return goSignIn('Session expired. Sign in again.');
+    if (String(err) === 'signed-out') {
+      try { return goApp(await invoke('sign_in_saved', { username: currentUser })); } catch {}
+      return goSignIn('Session expired. Sign in again.');
+    }
     $('foot').textContent = String(err);
   } finally { polling = false; }
 }
@@ -387,25 +390,64 @@ function showWho(name, avatar) {
 function goApp(me) {
   showWho(me.username, null);
   invoke('profile').then((p) => showWho(p.name || me.username, p.avatar)).catch(() => {});
-  $('signin').hidden = true; $('app').hidden = false;
+  currentUser = me.username;
+  showScreen('app');
   showToday(); heroKey = ''; clearInterval(timer);
   tick(); timer = setInterval(tick, 2500);
 }
-async function goSignIn(msg = '') {
+const PALETTE = ['#f9674e', '#7a80f6', '#2f9e6f', '#d98a1c', '#c24a8e', '#3b82c4'];
+const colorOf = (u) => PALETTE[[...u].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length];
+const initials = (n) => (n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+let currentUser = '';
+
+function showScreen(which) {
+  $('picker').hidden = which !== 'picker';
+  $('signin').hidden = which !== 'signin';
+  $('app').hidden = which !== 'app';
+}
+
+function showForm(username = '', msg = '', canGoBack = false) {
   clearInterval(timer);
-  try {
-    const l = await invoke('last_login');
-    if (l && !$('u').value) $('u').value = l.username || '';
-  } catch {}
-  $('signinErr').textContent = msg; $('p').value = '';
-  $('app').hidden = true; $('signin').hidden = false;
+  $('u').value = username; $('p').value = '';
+  $('signinErr').textContent = msg;
+  $('backToPicker').hidden = !canGoBack;
+  showScreen('signin');
   ($('u').value ? $('p') : $('u')).focus();
 }
+
+async function goSignIn(msg = '') {
+  clearInterval(timer);
+  let list = [];
+  try { list = await invoke('accounts'); } catch {}
+  if (!list.length) return showForm('', msg, false);
+  $('pickMsg').textContent = msg;
+  $('tiles').innerHTML = list.map((a, i) => `<button class="tile" data-u="${esc(a.username)}" style="animation-delay:${i * 60}ms" title="${esc(a.username)}">
+      <div class="av" style="background:${colorOf(a.username)}">${a.avatar ? `<img alt="" src="${a.avatar}">` : esc(initials(a.name))}</div>
+      <span class="nm">${esc(a.name)}</span>${a.saved ? '' : '<span class="sub2">password needed</span>'}
+      <span class="rm" data-rm title="Remove this account">×</span></button>`).join('')
+    + `<button class="tile add" id="addAcc" style="animation-delay:${list.length * 60}ms"><div class="av">+</div><span class="nm">Add account</span></button>`;
+  showScreen('picker');
+  const first = document.querySelector('#tiles .tile'); if (first) first.focus();
+}
+
+$('tiles').addEventListener('click', async (e) => {
+  if (e.target.closest('#addAcc')) return showForm('', '', true);
+  const tile = e.target.closest('.tile[data-u]');
+  if (!tile) return;
+  const u = tile.dataset.u;
+  if (e.target.closest('[data-rm]')) { await invoke('account_remove', { username: u }); return goSignIn(); }
+  const acc = (await invoke('accounts')).find((x) => x.username === u);
+  if (!acc || !acc.saved) return showForm(u, 'Enter your password.', true);
+  tile.classList.add('busy');
+  try { currentUser = u; goApp(await invoke('sign_in_saved', { username: u })); }
+  catch (err) { tile.classList.remove('busy'); showForm(u, String(err), true); }
+});
+$('backToPicker').addEventListener('click', () => goSignIn());
 
 $('signinForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('signinBtn').disabled = true; $('signinErr').textContent = '';
-  try { goApp(await invoke('sign_in', { server: '', username: $('u').value, password: $('p').value })); }
+  try { goApp(await invoke('sign_in', { server: '', username: $('u').value, password: $('p').value, remember: $('remember').checked })); }
   catch (err) { $('signinErr').textContent = String(err); }
   $('signinBtn').disabled = false;
 });

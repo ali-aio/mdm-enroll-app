@@ -111,3 +111,21 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 .ri .conn{color:var(--muted);display:flex;flex:none;}
 .ri .conn .ic{width:14px;height:14px;}
 .ri.on .conn{color:var(--accent-text);}
+
+/* account picker */
+.who2{max-width:720px;margin:9vh auto 0;text-align:center;}
+.who2 h1{font-size:24px;margin-bottom:6px;}
+.tiles{display:flex;flex-wrap:wrap;gap:26px;justify-content:center;margin-top:30px;}
+.tile{display:flex;flex-direction:column;align-items:center;gap:10px;width:112px;cursor:pointer;position:relative;background:none;border:0;font:inherit;color:var(--text);padding:0;animation:pop .45s cubic-bezier(.2,.9,.3,1.2) both;}
+.tile .av{width:96px;height:96px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:800;color:#fff;overflow:hidden;border:3px solid transparent;transition:transform .2s,border-color .2s,box-shadow .2s;box-shadow:0 6px 18px rgba(20,22,40,.2);}
+.tile .av img{width:100%;height:100%;object-fit:cover;display:block;}
+.tile:hover .av,.tile:focus-visible .av{transform:scale(1.08);border-color:var(--accent);}
+.tile .nm{font-size:13px;font-weight:600;max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tile .sub2{font-size:11px;color:var(--muted);margin-top:-6px;}
+.tile.add .av{background:transparent;border:2px dashed var(--border);color:var(--muted);box-shadow:none;font-size:38px;font-weight:300;}
+.tile.add:hover .av{border-color:var(--accent);color:var(--accent);}
+.tile .rm{position:absolute;top:-4px;right:6px;width:22px;height:22px;border-radius:50%;border:1px solid var(--border);background:var(--surface);color:var(--muted);font-size:13px;line-height:1;cursor:pointer;opacity:0;transition:opacity .15s;display:flex;align-items:center;justify-content:center;}
+.tile:hover .rm{opacity:1;}
+.tile.busy .av{animation:pulse 1s infinite;}
+.chk2{flex-direction:row;align-items:center;gap:8px;font-size:12px;font-weight:500;text-transform:none;letter-spacing:0;color:var(--text);}
+.chk2 input{width:auto;}

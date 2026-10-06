@@ -7,6 +7,14 @@
 <link rel="stylesheet" href="guide.css">
 </head>
 <body>
+<main id="picker" hidden>
+  <div class="who2">
+    <h1>Who’s signing in?</h1>
+    <p class="sub" id="pickMsg"></p>
+    <div class="tiles" id="tiles"></div>
+  </div>
+</main>
+
 <main id="signin" hidden>
   <form id="signinForm" class="card narrow" autocomplete="on">
     <div class="logo"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></div>
@@ -14,8 +22,10 @@
     <p class="sub">Sign in with your MDM account.</p>
     <label>Email or username<input id="u" name="username" autocomplete="username" required></label>
     <label>Password<input id="p" name="password" type="password" autocomplete="current-password" required></label>
+    <label class="chk2"><input type="checkbox" id="remember" checked> Save my password on this computer</label>
     <p id="signinErr" class="err" role="alert"></p>
     <button class="cc-btn primary" id="signinBtn">Sign in</button>
+    <button type="button" class="cc-btn" id="backToPicker" hidden>← Back to accounts</button>
   </form>
 </main>
 

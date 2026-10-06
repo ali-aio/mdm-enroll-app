@@ -1,7 +1,7 @@
 use enroll_core::adb::{Adb, Details, Firmware, Owner};
 use enroll_core::api::{self, ApiError, Session};
 use enroll_core::enroll::enroll_device;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -125,6 +125,136 @@ struct Me {
     server: String,
 }
 
+
+// ---- Saved accounts (the "who's signing in" picker) ----
+// Metadata (name, picture) is not secret and lives in accounts.json. Passwords go to the OS
+// keystore; only when there is none (a Linux box without Secret Service) do they fall back to
+// a 0600 file in the app's config folder.
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Account {
+    username: String,
+    name: String,
+    avatar: Option<String>,
+    server: String,
+    /// A password is stored, so one click signs in.
+    saved: bool,
+}
+
+fn accounts_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(config_dir(app)?.join("accounts.json"))
+}
+
+fn load_accounts(app: &AppHandle) -> Vec<Account> {
+    accounts_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|r| serde_json::from_str(&r).ok())
+        .unwrap_or_default()
+}
+
+fn store_accounts(app: &AppHandle, list: &[Account]) {
+    if let (Some(p), Ok(j)) = (accounts_path(app), serde_json::to_string(list)) {
+        let _ = std::fs::write(p, j);
+    }
+}
+
+fn pw_entry(user: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYRING_SERVICE, &format!("pw:{user}")).map_err(|e| e.to_string())
+}
+
+fn secrets_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(config_dir(app)?.join("secrets.json"))
+}
+
+fn read_secrets(app: &AppHandle) -> serde_json::Map<String, serde_json::Value> {
+    secrets_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|r| serde_json::from_str(&r).ok())
+        .unwrap_or_default()
+}
+
+fn pw_save(app: &AppHandle, user: &str, pw: &str) -> bool {
+    if pw_entry(user).and_then(|e| e.set_password(pw).map_err(|e| e.to_string())).is_ok() {
+        return true;
+    }
+    let mut m = read_secrets(app);
+    m.insert(user.to_string(), serde_json::Value::String(pw.to_string()));
+    match (secrets_path(app), serde_json::to_string(&m)) {
+        (Some(p), Ok(j)) => {
+            write_private(&p, &j);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn pw_load(app: &AppHandle, user: &str) -> Option<String> {
+    if let Some(p) = pw_entry(user).ok().and_then(|e| e.get_password().ok()) {
+        return Some(p);
+    }
+    read_secrets(app).get(user).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+fn pw_delete(app: &AppHandle, user: &str) {
+    if let Ok(e) = pw_entry(user) {
+        let _ = e.delete_credential();
+    }
+    let mut m = read_secrets(app);
+    if m.remove(user).is_some() {
+        if let (Some(p), Ok(j)) = (secrets_path(app), serde_json::to_string(&m)) {
+            write_private(&p, &j);
+        }
+    }
+}
+
+fn avatar_uri(bytes: Vec<u8>) -> String {
+    use base64::Engine;
+    format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Adds or refreshes the account tile after a successful sign-in. `password` is saved only
+/// when given (the "Save my password" box).
+fn remember_account(app: &AppHandle, s: &Session, password: Option<&str>) {
+    let p = s.profile().unwrap_or_default();
+    let avatar = if p.has_avatar { s.avatar().map(avatar_uri) } else { None };
+    let mut list = load_accounts(app);
+    let prev_saved = list.iter().find(|a| a.username == s.username).map(|a| a.saved).unwrap_or(false);
+    let saved = match password {
+        Some(pw) => pw_save(app, &s.username, pw),
+        None => prev_saved,
+    };
+    let acc = Account {
+        username: s.username.clone(),
+        name: if p.name.is_empty() { s.username.clone() } else { p.name },
+        avatar,
+        server: s.server.clone(),
+        saved,
+    };
+    list.retain(|a| a.username != acc.username);
+    list.insert(0, acc);
+    list.truncate(8);
+    store_accounts(app, &list);
+}
+
+#[tauri::command]
+fn accounts(app: AppHandle) -> Vec<Account> {
+    load_accounts(&app)
+}
+
+#[tauri::command]
+fn account_remove(app: AppHandle, username: String) {
+    let mut list = load_accounts(&app);
+    list.retain(|a| a.username != username);
+    store_accounts(&app, &list);
+    pw_delete(&app, &username);
+}
+
+#[tauri::command]
+async fn sign_in_saved(app: AppHandle, state: tauri::State<'_, State>, username: String) -> Result<Me, String> {
+    let pw = pw_load(&app, &username).ok_or_else(|| "No saved password for this account. Enter it again.".to_string())?;
+    sign_in_inner(app, state, String::new(), username, pw, true).await
+}
+
 #[tauri::command]
 fn me(app: AppHandle, state: tauri::State<State>) -> Option<Me> {
     let mut g = state.session.lock().unwrap();
@@ -135,15 +265,22 @@ fn me(app: AppHandle, state: tauri::State<State>) -> Option<Me> {
 }
 
 #[tauri::command]
-async fn sign_in(app: AppHandle, state: tauri::State<'_, State>, server: String, username: String, password: String) -> Result<Me, String> {
+async fn sign_in(app: AppHandle, state: tauri::State<'_, State>, server: String, username: String, password: String, remember: bool) -> Result<Me, String> {
+    sign_in_inner(app, state, server, username, password, remember).await
+}
+
+async fn sign_in_inner(app: AppHandle, state: tauri::State<'_, State>, server: String, username: String, password: String, remember: bool) -> Result<Me, String> {
     // Live unless AIO_MDM_SERVER says otherwise (for testing against stage); there is no field for it.
     let server = if server.trim().is_empty() { std::env::var("AIO_MDM_SERVER").unwrap_or_default() } else { server };
+    let pw = password.clone();
     let s = tauri::async_runtime::spawn_blocking(move || api::login(&server, &username, &password))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.message().to_string())?;
     save_session(&app, &s);
     let me = Me { username: s.username.clone(), role: s.role.clone(), server: s.server.clone() };
+    let (app2, s2) = (app.clone(), s.clone());
+    let _ = tauri::async_runtime::spawn_blocking(move || remember_account(&app2, &s2, if remember { Some(&pw) } else { None })).await;
     *state.session.lock().unwrap() = Some(s);
     Ok(me)
 }
@@ -449,7 +586,7 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_connect, wifi_reset, device_forget, device_reprompt, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_connect, wifi_reset, device_forget, device_reprompt, profile, last_login])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }
