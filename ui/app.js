@@ -169,7 +169,7 @@ async function classifyFor(list) {
 }
 const classChipHTML = (c) => {
   if (!c) return '';
-  const k = { fleet: ['fleet', CHECK_I + ' In your fleet'], production: ['prod', 'AIO · ' + (c.production || 'production')],
+  const k = { fleet: ['fleet', CHECK_I + ' In your fleet' + (c.device_class ? ' · ' + c.device_class : '')], production: ['prod', 'AIO · ' + (c.production || 'production')],
     family: ['prod', 'Like your ' + (c.family || 'enrolled devices') + (c.device_class ? ' · ' + c.device_class : '')],
     lookalike: ['look', 'Looks like ours?'], other: ['oth', 'Other phone'] }[c.class];
   return k ? `<span class="nb-chip ${k[0]}">${k[1]}</span>` : '';
@@ -203,14 +203,14 @@ const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
 function renderFound() {
   const box = $('foundNet');
   let list = found.filter((f) => !isConnected(f));
-  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || 'Phone';
+  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || (clsOf(f) || {}).name || 'Phone';
   const known = classKnown();
   const total = list.length;
   if (known) {
     list = [...list].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x)));          // ours first (stable)
     if (onlyOurs) list = list.filter((f) => isOurs(clsOf(f)));
   }
-  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
+  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '') + ((clsOf(f) || {}).device_class || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   const grew = total > nearPrev;     // the badge pops only when a new phone shows up
@@ -233,7 +233,7 @@ $('foundNet').addEventListener('click', async (e) => {
 
 // ---- Pairing screens: listed in the rail, and a popup asks for the code ----
 const serialOfSvc = (s) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(s.name || ''); return m ? m[1] : ''; };
-const pairName = (s) => (savedPhones.find((p) => s.addr.startsWith(p.host + ':')) || {}).name || 'Phone';
+const pairName = (s) => (savedPhones.find((p) => s.addr.startsWith(p.host + ':')) || {}).name || (clsOf(s) || {}).name || 'Phone';
 let pairAddr = '', pairBusy = false;
 const pairDismissed = new Set();    // closed by the person: don't pop up again until it goes away and returns
 const pairAutoOpened = new Set();   // already popped up once
@@ -241,7 +241,7 @@ const pairAutoOpened = new Set();   // already popped up once
 function renderPairing() {
   const box = $('pairNet');
   const ordered = classKnown() ? [...pairScreens].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x))) : pairScreens;
-  const sig = ordered.map((s) => s.addr + pairName(s) + ((clsOf(s) || {}).class || '')).join('|');
+  const sig = ordered.map((s) => s.addr + pairName(s) + ((clsOf(s) || {}).class || '') + ((clsOf(s) || {}).device_class || '')).join('|');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.innerHTML = ordered.length ? `<div class="sh"><span class="wave2"></span>Pairing requests</div>` + ordered.map((s) => {

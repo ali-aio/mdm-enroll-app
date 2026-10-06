@@ -60,6 +60,9 @@ pub struct SerialClass {
     pub family_count: u32,
     #[serde(default)]
     pub device_class: String,
+    /// Fleet devices: what the phone is ("AIO T7"), from what it reports to the MDM.
+    #[serde(default)]
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -258,12 +261,13 @@ mod tests {
     #[test]
     fn parses_the_classify_answer() {
         let v: serde_json::Value = serde_json::from_str(r#"{"serials":{
-            "AT070AA2600030":{"class":"fleet","device_class":"t7"},
+            "AT070AA2600030":{"class":"fleet","device_class":"t7","name":"AIO T7"},
             "AT070AABU00875":{"class":"production","production":"T7 batch BU","model":"07"},
             "DK19248T41099":{"class":"family","family":"SUNMI D2s_KDS_STGL","family_count":3,"device_class":"kds"},
             "18121FDF60022T":{"class":"other"}}}"#).unwrap();
         let m: HashMap<String, SerialClass> = serde_json::from_value(v["serials"].clone()).unwrap();
         assert_eq!(m["AT070AA2600030"].class, "fleet");
+        assert_eq!(m["AT070AA2600030"].name, "AIO T7");
         assert_eq!(m["AT070AABU00875"].production, "T7 batch BU");
         assert_eq!(m["DK19248T41099"].device_class, "kds");
         assert_eq!(m["DK19248T41099"].family_count, 3);
