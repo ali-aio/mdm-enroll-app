@@ -310,16 +310,19 @@ try {
   if (t && t.day === new Date().toDateString()) todayCount = t.n;
 } catch {}
 
+let pollSince = 0;
 async function tick() {
-  if (polling) return;
-  polling = true;
+  // A poll that never came back must not stop all later ones.
+  if (polling && Date.now() - pollSince < 45000) return;
+  polling = true; pollSince = Date.now();
   try {
     adb = await invoke('adb_status', { retry: false });
-    if (!adb.found) { devices = []; selected = null; refresh(); $('foot').textContent = 'adb not found'; return; }
+    if (!adb.found) { if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; } devices = []; selected = null; refresh(); $('foot').textContent = 'adb not found'; return; }
     const next = await invoke('list_devices');
     // A device the UI is mid-enroll on stays "enrolling" even if adb blips.
     next.forEach((d) => { if (run[d.handle] && run[d.handle].step !== undefined && !run[d.handle].done && !run[d.handle].error && d.status === 'ready') d.status = 'enrolling'; });
     devices = next;
+    if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; }
     if (!devices.some((d) => d.handle === selected)) {
       selected = (devices.find((d) => d.status === 'ready') || devices[0])?.handle ?? null;
     }
@@ -383,6 +386,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeHelp(
 function showWho(name, avatar) {
   $('whoName').textContent = name;
   const el = $('pfp');
+  el.classList.remove('sk');
   if (avatar) { el.innerHTML = `<img alt="" src="${avatar}">`; return; }
   el.textContent = (name || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 }
@@ -392,6 +396,8 @@ function goApp(me) {
   invoke('profile').then((p) => showWho(p.name || me.username, p.avatar)).catch(() => {});
   currentUser = me.username;
   showScreen('app');
+  $('pfp').className = 'pfp sk'; $('pfp').textContent = '';
+  renderSkeleton();
   showToday(); heroKey = ''; clearInterval(timer);
   tick(); timer = setInterval(tick, 2500);
 }
@@ -399,6 +405,17 @@ const PALETTE = ['#f9674e', '#7a80f6', '#2f9e6f', '#d98a1c', '#c24a8e', '#3b82c4
 const colorOf = (u) => PALETTE[[...u].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length];
 const initials = (n) => (n || '?').trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 let currentUser = '';
+let loaded = false;   // first device list received?
+
+// Shimmer placeholders until the first device list arrives.
+function renderSkeleton() {
+  loaded = false;
+  $('rail').innerHTML = Array.from({ length: 3 }, () => '<div class="ri skrow"><div class="ph sk"></div><span class="nm sk"></span></div>').join('');
+  const hero = $('hero');
+  hero.className = 'hero loading';
+  hero.innerHTML = '<div class="sk" style="width:84px;height:84px;border-radius:22px"></div><div class="sk" style="width:180px;height:18px"></div><div class="sk" style="width:130px;height:12px"></div><div class="sk" style="width:260px;height:44px;margin-top:10px;border-radius:12px"></div>';
+  heroKey = 'skeleton';
+}
 
 function showScreen(which) {
   $('picker').hidden = which !== 'picker';
@@ -438,7 +455,7 @@ $('tiles').addEventListener('click', async (e) => {
   if (e.target.closest('[data-rm]')) { await invoke('account_remove', { username: u }); return goSignIn(); }
   const acc = (await invoke('accounts')).find((x) => x.username === u);
   if (!acc || !acc.saved) return showForm(u, 'Enter your password.', true);
-  tile.classList.add('busy');
+  tile.classList.add('busy'); tile.querySelector('.nm').textContent = 'Signing in…';
   try { currentUser = u; goApp(await invoke('sign_in_saved', { username: u })); }
   catch (err) { tile.classList.remove('busy'); showForm(u, String(err), true); }
 });
@@ -446,10 +463,14 @@ $('backToPicker').addEventListener('click', () => goSignIn());
 
 $('signinForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-  $('signinBtn').disabled = true; $('signinErr').textContent = '';
+  const btn = $('signinBtn'), label = btn.textContent;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Signing in…';
+  $('signinForm').classList.add('working');
+  $('signinErr').textContent = '';
   try { goApp(await invoke('sign_in', { server: '', username: $('u').value, password: $('p').value, remember: $('remember').checked })); }
   catch (err) { $('signinErr').textContent = String(err); }
-  $('signinBtn').disabled = false;
+  btn.disabled = false; btn.textContent = label;
+  $('signinForm').classList.remove('working');
 });
 $('signOut').addEventListener('click', async () => { await invoke('sign_out'); goSignIn(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === document.body) $('go')?.click(); });

@@ -52,7 +52,7 @@ pub fn enroll_device(
     let apk_s = apk.to_str().ok_or("bad APK path")?;
 
     progress(2, "Installing the agent…");
-    let out = adb.run_on(handle, &["install", "-r", apk_s]).map_err(|e| format!("Install failed: {e}"))?;
+    let out = adb.patient(180).run_on(handle, &["install", "-r", apk_s]).map_err(|e| format!("Install failed: {e}"))?;
     if !out.contains("Success") {
         return Err(format!("Install failed: {}", out.trim()));
     }
@@ -63,6 +63,7 @@ pub fn enroll_device(
     } else {
         progress(3, "Setting Device Owner…");
         let out = adb
+            .patient(60)
             .shell(handle, &["dpm", "set-device-owner", &component])
             .map_err(|e| format!("set-device-owner failed: {e}"))?;
         if !out.contains("Success") {

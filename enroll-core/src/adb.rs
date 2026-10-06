@@ -1,11 +1,20 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 pub struct Adb {
     pub bin: PathBuf,
+    /// Longest any single adb call may take. A phone that accepts the connection but never
+    /// answers (asleep over Wi-Fi) would otherwise block the whole app forever.
+    pub timeout: Duration,
 }
+
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+/// For the per-device checks that run on every refresh.
+pub const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct RawDevice {
@@ -111,6 +120,13 @@ pub fn parse_mdns(out: &str) -> Vec<MdnsService> {
             valid_hostport(addr).then(|| MdnsService { name: name.to_string(), kind: kind.into(), addr: addr.to_string() })
         })
         .collect()
+}
+
+impl Details {
+    /// False when the phone answered none of the property reads (asleep, or a dead Wi-Fi link).
+    pub fn responsive(&self) -> bool {
+        !(self.serial.is_empty() && self.model.is_empty() && self.manufacturer.is_empty() && self.android.is_empty())
+    }
 }
 
 impl Adb {
@@ -240,7 +256,7 @@ impl Adb {
         cands
             .into_iter()
             .find(|p| p.is_file())
-            .map(|bin| Adb { bin })
+            .map(|bin| Adb { bin, timeout: DEFAULT_TIMEOUT })
     }
 
     fn cmd(&self) -> Command {
@@ -254,15 +270,51 @@ impl Adb {
         c
     }
 
-    /// Runs adb with the given args; returns stdout. Errors carry stderr.
+    /// Same adb, but with the short timeout used for the checks that run on every refresh.
+    pub fn quick(&self) -> Adb {
+        Adb { bin: self.bin.clone(), timeout: PROBE_TIMEOUT }
+    }
+
+    /// Same adb with a longer limit, for installs.
+    pub fn patient(&self, secs: u64) -> Adb {
+        Adb { bin: self.bin.clone(), timeout: Duration::from_secs(secs) }
+    }
+
+    /// Runs adb with the given args; returns stdout. Errors carry stderr. Killed and
+    /// reported as "adb timed out" if it takes longer than `self.timeout`.
     pub fn run(&self, args: &[&str]) -> Result<String, String> {
-        let out = self.cmd().args(args).output().map_err(|e| format!("cannot run adb: {e}"))?;
-        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        if out.status.success() {
+        let mut child = self
+            .cmd()
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("cannot run adb: {e}"))?;
+        // Drain both pipes on their own threads so a large dumpsys cannot fill a pipe and stall.
+        let mut so = child.stdout.take().ok_or("no stdout")?;
+        let mut se = child.stderr.take().ok_or("no stderr")?;
+        let t_out = std::thread::spawn(move || { let mut b = Vec::new(); let _ = so.read_to_end(&mut b); b });
+        let t_err = std::thread::spawn(move || { let mut b = Vec::new(); let _ = se.read_to_end(&mut b); b });
+        let deadline = Instant::now() + self.timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break st,
+                Ok(None) if Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("adb timed out".into());
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+                Err(e) => return Err(format!("adb failed: {e}")),
+            }
+        };
+        let stdout = String::from_utf8_lossy(&t_out.join().unwrap_or_default()).into_owned();
+        let stderr = String::from_utf8_lossy(&t_err.join().unwrap_or_default()).into_owned();
+        if status.success() {
             Ok(stdout)
         } else {
-            let err = String::from_utf8_lossy(&out.stderr);
-            Err(format!("{}{}", stdout.trim(), err.trim()).trim().to_string())
+            Err(format!("{}{}", stdout.trim(), stderr.trim()).trim().to_string())
         }
     }
 
@@ -436,7 +488,7 @@ mod tests {
 
     #[test]
     fn forget_refuses_usb_and_bad_handles_without_running_adb() {
-        let a = Adb { bin: PathBuf::from("/nonexistent/adb") };
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
         assert!(a.disconnect_device("A1B2C3").unwrap_err().contains("USB"));
         assert!(a.disconnect_device("x; reboot").is_err());
         assert!(a.reprompt("x; reboot").is_err());
@@ -457,6 +509,21 @@ mod tests {
         assert!(is_network_handle("192.168.1.5:5555"));
         assert!(is_network_handle("adb-DK19248T41010-FoT4PR._adb-tls-connect._tcp"));
         assert!(!is_network_handle("18121FDF60022T"));
+    }
+
+    #[test]
+    fn a_hung_command_is_killed_at_the_timeout() {
+        // `sleep` stands in for an adb call that never answers.
+        let a = Adb { bin: PathBuf::from("sleep"), timeout: Duration::from_millis(300) };
+        let t = Instant::now();
+        assert_eq!(a.run(&["5"]).unwrap_err(), "adb timed out");
+        assert!(t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn unanswered_property_reads_are_unresponsive() {
+        assert!(!Details::default().responsive());
+        assert!(Details { model: "T7".into(), ..Default::default() }.responsive());
     }
 
     #[test]

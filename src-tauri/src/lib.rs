@@ -26,6 +26,8 @@ struct Probe {
     owner: Owner,
     accounts: usize,
     firmware: Option<Firmware>,
+    /// The phone is on the list but answers nothing.
+    unresponsive: bool,
 }
 
 #[derive(Serialize)]
@@ -46,6 +48,22 @@ struct DeviceRow {
     server_seen: bool,
     server_status: String,
     last_seen: String,
+}
+
+/// All the read-only checks for one device. Short timeouts: a phone that never answers
+/// comes back `unresponsive` instead of hanging the list.
+fn probe_device(q: &Adb, handle: &str) -> Probe {
+    let details = q.details(handle);
+    if !details.responsive() {
+        return Probe { details, unresponsive: true, ..Default::default() };
+    }
+    Probe {
+        owner: q.owner(handle),
+        accounts: q.account_count(handle),
+        firmware: q.firmware(handle),
+        details,
+        unresponsive: false,
+    }
 }
 
 fn entry() -> Result<keyring::Entry, String> {
@@ -317,6 +335,27 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
     let (rows, serials) = tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
         let st = app2.state::<State>();
         let raw = adb.devices()?;
+        // Probe every device whose cached result is stale, all at once, so one slow phone
+        // costs one timeout rather than blocking the rest.
+        let stale: Vec<String> = raw
+            .iter()
+            .filter(|d| d.state == "device")
+            .filter(|d| !matches!(st.probes.lock().unwrap().get(&d.handle), Some((t, _)) if t.elapsed() < Duration::from_secs(10)))
+            .map(|d| d.handle.clone())
+            .collect();
+        let fresh: Vec<(String, Probe)> = std::thread::scope(|sc| {
+            let jobs: Vec<_> = stale
+                .iter()
+                .map(|h| {
+                    let q = adb.quick();
+                    sc.spawn(move || (h.clone(), probe_device(&q, h)))
+                })
+                .collect();
+            jobs.into_iter().filter_map(|j| j.join().ok()).collect()
+        });
+        for (h, p) in fresh {
+            st.probes.lock().unwrap().insert(h, (Instant::now(), p));
+        }
         let mut rows = Vec::new();
         let mut serials = Vec::new();
         for d in raw {
@@ -333,23 +372,13 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                     row.note = "Accept the USB debugging prompt on the device".into();
                 }
                 "device" => {
-                    let probe = {
-                        let g = st.probes.lock().unwrap();
-                        match g.get(&d.handle) {
-                            Some((t, p)) if t.elapsed() < Duration::from_secs(10) => p.clone(),
-                            _ => {
-                                drop(g);
-                                let p = Probe {
-                                    details: adb.details(&d.handle),
-                                    owner: adb.owner(&d.handle),
-                                    accounts: adb.account_count(&d.handle),
-                                    firmware: adb.firmware(&d.handle),
-                                };
-                                st.probes.lock().unwrap().insert(d.handle.clone(), (Instant::now(), p.clone()));
-                                p
-                            }
-                        }
-                    };
+                    let probe = st.probes.lock().unwrap().get(&d.handle).map(|(_, p)| p.clone()).unwrap_or_default();
+                    if probe.unresponsive {
+                        row.status = "offline".into();
+                        row.note = "Not responding. Wake the phone, or check it is on the same Wi-Fi.".into();
+                        rows.push(row);
+                        continue;
+                    }
                     row.serial = probe.details.serial.clone();
                     row.android = probe.details.android.clone();
                     let name = format!("{} {}", probe.details.manufacturer, probe.details.model).trim().to_string();
