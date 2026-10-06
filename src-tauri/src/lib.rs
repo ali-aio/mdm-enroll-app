@@ -546,7 +546,7 @@ async fn adb_status(app: AppHandle, retry: bool) -> AdbInfo {
 async fn wifi_discover(app: AppHandle) -> Result<Vec<enroll_core::adb::MdnsService>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<State>();
-        Ok(adb_of(&app, &st)?.mdns_services())
+        Ok(adb_of(&app, &st)?.quick().mdns_services())
     })
     .await
     .map_err(|e| e.to_string())?

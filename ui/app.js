@@ -88,10 +88,47 @@ function learnPhones() {
   if (changed) saveSaved();
 }
 
+// ---- Phones found on the network (Wireless debugging is on) ----
+let found = [];            // [{ name, addr }]
+let discTimer = null, discBusy = false;
+async function discover() {
+  if (discBusy || !adb.found || $('app').hidden) return;
+  discBusy = true;
+  try {
+    const svcs = await invoke('wifi_discover');
+    found = svcs.filter((x) => x.kind === 'connect');
+    renderFound();
+  } catch {} finally { discBusy = false; }
+}
+const isConnected = (f) => devices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name));
+
+function renderFound() {
+  const box = $('foundNet');
+  const list = found.filter((f) => !isConnected(f));
+  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || 'Phone on your network';
+  const sig = list.map((f) => f.addr + nameOf(f)).join('|');
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = list.length ? `<div class="sh"><span class="wave2"></span>Found on your network</div>` + list.map((f, i) =>
+    `<div class="sv fn" data-addr="${esc(f.addr)}" style="animation-delay:${i * 50}ms"><div class="svm"><span class="nm">${esc(nameOf(f))}</span><span class="svd mono">${esc(f.addr)}</span></div><button class="cc-btn primary sm" data-go>Connect</button></div>`).join('') : '';
+}
+$('foundNet').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-go]');
+  if (!btn) return;
+  const row = btn.closest('.fn'), addr = row.dataset.addr;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; await tick(); discover(); }
+  catch (err) {
+    btn.disabled = false; btn.textContent = 'Retry';
+    row.querySelector('.svd').textContent = 'Could not connect — pair it first (Add over Wi-Fi)';
+    row.querySelector('.svd').style.color = 'var(--danger)';
+  }
+});
+
 function renderSaved() {
   const box = $('saved');
   learnPhones();
-  const online = (p) => devices.some((x) => x.handle.startsWith(p.host + ':'));
+  const online = (p) => devices.some((x) => x.handle.startsWith(p.host + ':')) || found.some((f) => f.addr.startsWith(p.host + ':'));
   const list = savedPhones.filter((p) => !online(p));
   const sig = list.map((p) => [p.host, p.name, p.serial, p.android, p.firmware].join('~')).join('|');
   if (box.dataset.sig === sig) return;
@@ -122,6 +159,7 @@ $('addWifi').addEventListener('click', () => { wifiMode = true; wifiPrefill = ''
 
 function renderRail() {
   $('addWifi').classList.toggle('on', wifiMode);
+  renderFound();
   renderSaved();
   const rail = $('rail');
   const have = new Map([...rail.children].map((el) => [el.dataset.h, el]));
@@ -417,6 +455,7 @@ function goApp(me) {
   renderSkeleton();
   showToday(); heroKey = ''; clearInterval(timer);
   tick(); timer = setInterval(tick, 2500);
+  clearInterval(discTimer); discover(); discTimer = setInterval(discover, 4000);
 }
 const PALETTE = ['#f9674e', '#7a80f6', '#2f9e6f', '#d98a1c', '#c24a8e', '#3b82c4'];
 const colorOf = (u) => PALETTE[[...u].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length];
@@ -450,7 +489,7 @@ function showForm(username = '', msg = '', canGoBack = false) {
 }
 
 async function goSignIn(msg = '') {
-  clearInterval(timer);
+  clearInterval(timer); clearInterval(discTimer); found = [];
   let list = [];
   try { list = await invoke('accounts'); } catch {}
   if (!list.length) return showForm('', msg, false);
