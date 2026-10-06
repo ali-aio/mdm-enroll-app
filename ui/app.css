@@ -250,3 +250,8 @@ form.working input{opacity:.6;pointer-events:none;}
 .pm-btns{display:flex;gap:10px;justify-content:center;margin-top:8px;width:100%;}
 .pm-btns .cc-btn{flex:1;padding:9px 0;}
 @keyframes fade{from{opacity:0}to{opacity:1}}
+
+/* The rail scrolls, and a scroll box clips whatever touches its edge (a row's 1px border, more so
+   under the app's zoom). Pad it inward and pull it back out so layout stays put. */
+.railwrap{padding:3px;margin:-3px;}
+.hero{overflow-x:hidden;}
