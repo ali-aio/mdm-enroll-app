@@ -37,6 +37,32 @@ pub fn valid_handle(h: &str) -> bool {
         && h.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '_' | '-'))
 }
 
+/// Package of the in-house firmware client (a platform-signed system app in our AOSP images).
+pub const FIRMWARE_PKG: &str = "com.aioapp.mdm";
+
+/// An in-house device: our own firmware, with the MDM client baked in. It enrolls itself.
+#[derive(Clone, Debug, Serialize, Default, PartialEq)]
+pub struct Firmware {
+    pub version: String,
+    pub build: String,
+}
+
+/// `pm list packages <filter>` matches substrings (it would also list `.dpc`), so look
+/// for the exact package line.
+pub fn package_listed(out: &str, pkg: &str) -> bool {
+    let want = format!("package:{pkg}");
+    out.lines().any(|l| l.trim() == want)
+}
+
+/// `versionName=1.6.2` out of `dumpsys package <pkg>`.
+pub fn parse_version_name(dump: &str) -> String {
+    dump.lines()
+        .find_map(|l| l.trim().strip_prefix("versionName="))
+        .and_then(|v| v.split_whitespace().next())
+        .unwrap_or("")
+        .to_string()
+}
+
 /// A phone found on the network by `adb mdns services`.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct MdnsService {
@@ -267,6 +293,20 @@ impl Adb {
         parse_owner(&out)
     }
 
+    /// Present when the device runs our firmware with the MDM client installed.
+    pub fn firmware(&self, handle: &str) -> Option<Firmware> {
+        let listed = self.shell(handle, &["pm", "list", "packages", FIRMWARE_PKG]).unwrap_or_default();
+        if !package_listed(&listed, FIRMWARE_PKG) {
+            return None;
+        }
+        let dump = self.shell(handle, &["dumpsys", "package", FIRMWARE_PKG]).unwrap_or_default();
+        let mut build = self.prop(handle, "ro.build.display.id");
+        if build.is_empty() {
+            build = self.prop(handle, "ro.build.id");
+        }
+        Some(Firmware { version: parse_version_name(&dump), build })
+    }
+
     pub fn account_count(&self, handle: &str) -> usize {
         let out = self.shell(handle, &["dumpsys", "account"]).unwrap_or_default();
         out.matches("Account {").count()
@@ -385,6 +425,16 @@ mod tests {
         assert!(a.disconnect_device("A1B2C3").unwrap_err().contains("USB"));
         assert!(a.disconnect_device("x; reboot").is_err());
         assert!(a.reprompt("x; reboot").is_err());
+    }
+
+    #[test]
+    fn firmware_package_detection() {
+        let both = "package:com.aioapp.mdm.dpc\npackage:other.app\n";
+        assert!(!package_listed(both, FIRMWARE_PKG)); // the standard (DPC) agent is not firmware
+        assert!(package_listed("package:com.aioapp.mdm\r\n", FIRMWARE_PKG));
+        assert!(!package_listed("", FIRMWARE_PKG));
+        assert_eq!(parse_version_name("  versionCode=161 minSdk=30\n  versionName=1.6.2\n"), "1.6.2");
+        assert_eq!(parse_version_name("nothing"), "");
     }
 
     #[test]

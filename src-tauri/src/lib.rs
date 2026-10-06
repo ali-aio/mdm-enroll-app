@@ -1,4 +1,4 @@
-use enroll_core::adb::{Adb, Details, Owner};
+use enroll_core::adb::{Adb, Details, Firmware, Owner};
 use enroll_core::api::{self, ApiError, Session};
 use enroll_core::enroll::enroll_device;
 use serde::Serialize;
@@ -25,6 +25,7 @@ struct Probe {
     details: Details,
     owner: Owner,
     accounts: usize,
+    firmware: Option<Firmware>,
 }
 
 #[derive(Serialize)]
@@ -34,11 +35,15 @@ struct DeviceRow {
     name: String,
     serial: String,
     android: String,
-    /// ready | enrolling | enrolled | blocked | unauthorized | offline
+    /// ready | enrolling | enrolled | firmware | blocked | unauthorized | offline
     status: String,
     note: String,
     class: String,
     agent_version: String,
+    /// Our own firmware (client `com.aioapp.mdm`): version, build, and whether the MDM has seen it.
+    firmware_version: String,
+    build: String,
+    server_seen: bool,
 }
 
 fn entry() -> Result<keyring::Entry, String> {
@@ -178,6 +183,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 handle: d.handle.clone(), adb_state: d.state.clone(), name: d.model.clone(),
                 serial: String::new(), android: String::new(), status: "offline".into(),
                 note: String::new(), class: String::new(), agent_version: String::new(),
+                firmware_version: String::new(), build: String::new(), server_seen: false,
             };
             match d.state.as_str() {
                 "unauthorized" => {
@@ -195,6 +201,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                                     details: adb.details(&d.handle),
                                     owner: adb.owner(&d.handle),
                                     accounts: adb.account_count(&d.handle),
+                                    firmware: adb.firmware(&d.handle),
                                 };
                                 st.probes.lock().unwrap().insert(d.handle.clone(), (Instant::now(), p.clone()));
                                 p
@@ -210,7 +217,13 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                     if !row.serial.is_empty() {
                         serials.push(row.serial.clone());
                     }
-                    if probe.accounts > 0 {
+                    if let Some(fw) = &probe.firmware {
+                        // In-house firmware: the client is part of the image and enrolls itself, and it
+                        // is the Device Owner, so the checks below would wrongly call it blocked.
+                        row.status = "firmware".into();
+                        row.firmware_version = fw.version.clone();
+                        row.build = fw.build.clone();
+                    } else if probe.accounts > 0 {
                         row.status = "blocked".into();
                         row.note = "Has an account — factory reset, don't add an account".into();
                     } else if probe.owner.set && !probe.owner.ours {
@@ -241,6 +254,13 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
     for r in rows.iter_mut() {
         if busy.contains(&r.handle) {
             r.status = "enrolling".into();
+        } else if r.status == "firmware" {
+            if let Some(s) = statuses.get(&r.serial) {
+                r.server_seen = s.enrolled;
+                if s.enrolled {
+                    r.class = s.class.clone();
+                }
+            }
         } else if let Some(s) = statuses.get(&r.serial) {
             if s.enrolled {
                 r.status = "enrolled".into();

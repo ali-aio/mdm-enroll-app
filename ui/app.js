@@ -12,6 +12,7 @@ const ICON = {
   pos: svg('<path d="M6 3h12v18l-2-1.5L14 21l-2-1.5L10 21l-2-1.5L6 21z"/><path d="M9 8h6M9 12h6"/>'),
   kds: svg('<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 9h5M7 12.5h8M9 21h6"/>'),
   kiosk: svg('<rect x="6" y="2.5" width="12" height="16" rx="2"/><path d="M9 21.5h6M12 18.5v3"/>'),
+  tablet: svg('<rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M10.5 17h3"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>'),
 };
 const PHONE = ICON.phone;
@@ -67,8 +68,8 @@ const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8
 
 const isNet = (d) => d.handle.includes(':');
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
-const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || ICON.phone);
-const dotOf = (d) => ({ ready: '', enrolled: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
+const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
+const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
 
 function renderSaved() {
   const box = $('saved');
@@ -137,7 +138,7 @@ function renderHero() {
   const r = d && run[d.handle];
   const key = !adb.found ? 'adb|' + (guideOs || adb.os)
     : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : ''].join('|') : 'empty';
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
   const tok = (heroTok = {});
@@ -194,6 +195,14 @@ function renderHero() {
       <button class="cc-btn primary" id="next" style="margin-top:12px">Next device</button>${burst}`;
     if (r) r.done = false;
     heroKey = [d.handle, d.status, classOf(d.handle), '', ''].join('|');
+  } else if (d.status === 'firmware') {
+    const seen = d.server_seen
+      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}. Nothing to do here.</div>`
+      : '<div class="wmsg" style="background:var(--surface-3)">Not seen by the MDM yet. It enrolls itself the first time it checks in over the network, so make sure it has internet.</div>';
+    hero.innerHTML = `${head}<div class="okbig" style="margin-top:6px">${CHECK}</div><h2 style="margin-top:6px">Already runs AIO MDM firmware</h2>
+      <div class="mono" style="color:var(--muted)">MDM client ${esc(d.firmware_version || '—')}${d.build ? ' · build ' + esc(d.build) : ''}</div>
+      <div class="amsg" style="margin-top:4px">${seen}</div>
+      ${isNet(d) ? '<div class="acts"><button class="cc-btn sm" data-forget>Forget this device</button></div>' : ''}`;
   } else if (d.status === 'blocked') {
     hero.innerHTML = `${head}<div class="fix">${esc(d.note)}<br>Then plug it in again.</div>`;
   } else if (d.status === 'unauthorized') {
