@@ -59,13 +59,49 @@ let heroKey = '';
 let adb = { found: true, os: 'linux', version: '' };   // from adb_status
 let guideOs = null;            // OS tab shown in the adb help (defaults to this computer)
 let emptySince = 0, tipShown = false;
-let heroTok = {};              // cancels the phone animation when the hero is redrawn
+let heroTok = {};
+let wifiMode = false, wifiPrefill = '';
+let savedPhones = [];
+try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
+const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));              // cancels the phone animation when the hero is redrawn
 
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || ICON.phone);
 const dotOf = (d) => ({ ready: '', enrolled: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
 
+function renderSaved() {
+  const box = $('saved');
+  // Give saved phones the name the device list learned for them.
+  savedPhones.forEach((p) => { const d = devices.find((x) => x.handle.startsWith(p.host + ':')); if (d && d.name && p.name !== d.name) { p.name = d.name; saveSaved(); } });
+  const online = (p) => devices.some((x) => x.handle.startsWith(p.host + ':'));
+  const list = savedPhones.filter((p) => !online(p));
+  const sig = list.map((p) => p.host + p.name).join('|');
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => `<div class="sv" data-host="${esc(p.host)}"><span class="nm">${esc(p.name || p.host)}</span><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`).join('') : '';
+}
+$('saved').addEventListener('click', async (e) => {
+  const row = e.target.closest('.sv');
+  if (!row) return;
+  const host = row.dataset.host;
+  if (e.target.closest('[data-rm]')) { savedPhones = savedPhones.filter((p) => p.host !== host); saveSaved(); $('saved').dataset.sig = ''; return renderSaved(); }
+  const btn = e.target.closest('[data-re]');
+  if (!btn) return;
+  btn.innerHTML = '<span class="spin"></span>';
+  // Ports change, so look up the phone's current one before trying.
+  let addr = '';
+  try { addr = ((await invoke('wifi_discover')).find((s) => s.kind === 'connect' && s.addr.startsWith(host + ':')) || {}).addr || ''; } catch {}
+  if (addr) {
+    try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; return tick(); } catch {}
+  }
+  btn.textContent = 'Connect';
+  wifiMode = true; wifiPrefill = host + ':'; heroKey = ''; refresh();
+});
+$('addWifi').addEventListener('click', () => { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); });
+
 function renderRail() {
+  $('addWifi').classList.toggle('on', wifiMode);
+  renderSaved();
   const rail = $('rail');
   const have = new Map([...rail.children].map((el) => [el.dataset.h, el]));
   devices.forEach((d, i) => {
@@ -74,10 +110,10 @@ function renderRail() {
       el = document.createElement('button');
       el.className = 'ri in';
       el.dataset.h = d.handle;
-      el.addEventListener('click', () => { selected = d.handle; refresh(); });
+      el.addEventListener('click', () => { selected = d.handle; wifiMode = false; refresh(); });
     }
     have.delete(d.handle);
-    el.classList.toggle('on', d.handle === selected);
+    el.classList.toggle('on', d.handle === selected && !wifiMode);
     el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><i class="${dotOf(d)}"></i>`;
     if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
   });
@@ -99,6 +135,7 @@ function renderHero() {
   const d = devices.find((x) => x.handle === selected);
   const r = d && run[d.handle];
   const key = !adb.found ? 'adb|' + (guideOs || adb.os)
+    : wifiMode ? 'wifi'
     : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
@@ -106,10 +143,25 @@ function renderHero() {
   const alive = () => heroTok === tok;
 
   if (!adb.found) {
+    hero.classList.remove('wifi');
     const os = guideOs || adb.os;
     hero.innerHTML = Guide.adbCard(os, adb.os);
     const redraw = (o) => { guideOs = o; heroKey = ''; renderHero(); };
     Guide.wire(hero, redraw);
+    return;
+  }
+  hero.classList.toggle('wifi', wifiMode);
+  if (wifiMode) {
+    hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
+    Wifi.draw(hero.querySelector('.wbody'), {
+      invoke, esc, Guide, alive, prefill: wifiPrefill,
+      onConnected: (addr) => {
+        const host = String(addr).split(':')[0];
+        if (!savedPhones.some((p) => p.host === host)) { savedPhones.unshift({ host, name: '' }); saveSaved(); }
+        setTimeout(() => { wifiMode = false; selected = addr; heroKey = ''; tick(); }, 1600);
+      },
+    });
+    wifiPrefill = '';
     return;
   }
   if (!d) {
@@ -257,7 +309,6 @@ function openHelp(tab) {
 function closeHelp() { $('drawer').classList.remove('open'); helpTok = {}; }
 function drawTab() {
   const body = $('drawerBody'), tok = (helpTok = {});
-  $('drawer').classList.toggle('wide', helpTab === 'wifi');
   const alive = () => helpTok === tok && $('drawer').classList.contains('open') && helpTab === 'phone';
   document.querySelectorAll('#drawer .dt button').forEach((b) => b.classList.toggle('on', b.dataset.t === helpTab));
   if (helpTab === 'phone') {
@@ -271,12 +322,6 @@ function drawTab() {
     body.innerHTML = status + Guide.guideHTML(os, adb.os) + '<button class="cc-btn primary sm" data-retry style="margin-top:10px">↻ Retry</button>';
     Guide.wire(body, (o) => { guideOs = o; drawTab(); });
     body.querySelector('[data-retry]').onclick = async (e) => { await retryAdb(e.currentTarget); drawTab(); };
-  } else if (helpTab === 'wifi') {
-    Wifi.draw(body, {
-      invoke, esc, Guide,
-      alive: () => helpTok === tok && $('drawer').classList.contains('open') && helpTab === 'wifi',
-      onConnected: () => { heroKey = ''; tick(); },
-    });
   } else {
     body.innerHTML = Guide.troubleHTML;
   }

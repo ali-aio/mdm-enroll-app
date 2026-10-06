@@ -12,7 +12,6 @@ const Wifi = (() => {
 
   function draw(body, ctx) {
     const { invoke, esc, Guide, alive } = ctx;
-    document.getElementById('drawer').classList.add('wide');
     body.innerHTML = `<div class="wsplit"><div class="steps">${STEPS.map((s, i) =>
       `<div class="cs" data-i="${i}"><div class="n">${i + 1}</div><div style="flex:1;min-width:0"><b>${s[0]}</b><span class="d">${s[1]}</span><div class="extra"></div></div></div>`).join('')}
       </div><div class="pcol"><div class="ph-slot"></div><div class="cap"></div></div></div>`;
@@ -76,7 +75,7 @@ const Wifi = (() => {
         cs[3].querySelector('.n').innerHTML = CHECKSVG;
         cmsg.innerHTML = `<div class="wmsg ok">${esc(m)} It now shows up in your device list.</div>`;
         btn.textContent = 'Connected ✓';
-        ctx.onConnected();
+        ctx.onConnected(addr);
       } catch (err) {
         const raw = String(err).split('adb said:')[1] || '';
         cs[3].classList.add('bad');
@@ -112,7 +111,7 @@ const Wifi = (() => {
       }
     })();
 
-    show(0);
+    if (ctx.prefill) { ca.value = ctx.prefill; done[0] = done[1] = done[2] = true; show(3); ca.focus(); } else show(0);
   }
   return { draw };
 })();

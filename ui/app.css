@@ -37,7 +37,8 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 .press{transform:scale(.94);}
 
 /* rail */
-.rail{display:flex;flex-direction:column;gap:8px;overflow:auto;}
+.railwrap{display:flex;flex-direction:column;gap:8px;overflow:auto;min-height:0;}
+.rail{display:flex;flex-direction:column;gap:8px;}
 .ri{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:11px;border:1px solid var(--border);background:var(--surface);font:inherit;font-size:12px;font-weight:600;color:var(--text);text-align:left;cursor:pointer;position:relative;transition:border-color .2s,background .2s;}
 .ri:hover{border-color:var(--accent-edge);}
 .ri.on{border-color:var(--accent-edge);background:var(--accent-soft);}
@@ -88,3 +89,15 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 .ri .ph .ic{width:16px;height:16px;}
 .bigph{color:var(--text-soft,var(--muted));}.bigph .ic{width:42px;height:42px;}
 .ri .ph{color:var(--muted);}
+
+.addw{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:11px;border:1px dashed var(--accent-edge);background:var(--accent-soft);color:var(--accent-text);font:inherit;font-size:12px;font-weight:700;cursor:pointer;text-align:left;transition:all .2s;}
+.addw .ic{width:16px;height:16px;flex:none}
+.addw:hover{border-style:solid;}
+.addw.on{background:var(--accent);color:#fff;border-style:solid;border-color:var(--accent);}
+.saved .sh{font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:6px 2px 4px;}
+.sv{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;border:1px solid var(--border);background:var(--surface);font-size:11.5px;font-weight:600;margin-bottom:6px;animation:slidein .35s both;}
+.sv .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sv .x{border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:13px;padding:0 2px;}
+.hero.wifi{align-items:stretch;justify-content:flex-start;text-align:left;}
+.hero.wifi .wh{font-size:16px;font-weight:700;margin-bottom:2px;}
+.hero.wifi .wsub{font-size:12px;color:var(--muted);margin-bottom:12px;}

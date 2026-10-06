@@ -23,12 +23,16 @@
 <div id="app" hidden>
   <div class="topbar"><b>AIO Enroll</b><span class="sp"></span><button class="helpbtn" id="helpBtn" aria-label="Help" title="Help">?</button><span class="pfp" id="pfp" aria-hidden="true"></span><span id="whoName" class="who"></span><button class="cc-btn sm" id="signOut">Sign out</button></div>
   <div class="focus">
-    <nav class="rail" id="rail" aria-label="Devices"></nav>
+    <nav class="railwrap" aria-label="Devices">
+      <div class="rail" id="rail"></div>
+      <button class="addw" id="addWifi"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></svg>Add over Wi-Fi</button>
+      <div class="saved" id="saved"></div>
+    </nav>
     <section class="hero" id="hero" aria-live="polite"></section>
   </div>
   <aside class="drawer" id="drawer" aria-label="Help">
     <div class="dh"><span>Help</span><button class="cc-btn sm" id="drawerX">Close</button></div>
-    <div class="dt"><button data-t="phone" class="on">Phone</button><button data-t="pc">Computer</button><button data-t="wifi">Wi-Fi</button><button data-t="tr">Trouble?</button></div>
+    <div class="dt"><button data-t="phone" class="on">Phone</button><button data-t="pc">Computer</button><button data-t="tr">Trouble?</button></div>
     <div class="db" id="drawerBody"></div>
   </aside>
   <footer><span class="dot"></span><span id="foot">Watching for devices</span><span class="sp"></span><span id="today" class="mono"></span></footer>
