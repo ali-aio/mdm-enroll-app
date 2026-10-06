@@ -87,6 +87,12 @@ impl Adb {
         parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default())
     }
 
+    /// Restarts the adb helper: clears stuck or half-open connections.
+    pub fn reset(&self) {
+        let _ = self.run(&["kill-server"]);
+        self.start_server();
+    }
+
     /// `adb pair <ip:pairing-port> <6-digit code>`. The code and port come from the phone's
     /// "Pair device with pairing code" dialog and expire when it closes.
     pub fn pair(&self, addr: &str, code: &str) -> Result<String, String> {
@@ -100,7 +106,7 @@ impl Adb {
         if out.to_lowercase().contains("successfully paired") {
             Ok("Paired. Now connect using the other IP address and port on the Wireless debugging screen.".into())
         } else {
-            Err(format!("Pairing failed. Check the code is current (it changes if you close the dialog) and use the <i>pairing</i> port, not the connect port. adb said: {}", out.trim()))
+            Err(format!("Pairing failed. Check the code is current (it changes if you close the dialog) and use the pairing port from that dialog, not the connect port. adb said: {}", out.trim()))
         }
     }
 

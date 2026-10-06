@@ -11,6 +11,10 @@ const Guide = (() => {
     about: 'Settings → About phone → tap “Build number” 7 times',
     usb: 'Settings → Developer options → switch on “USB debugging”',
     allow: 'Plug in the cable and tap “Allow” on the phone',
+    wifi: 'Phone on the same Wi-Fi as this computer',
+    wd: 'Developer options → turn on Wireless debugging',
+    pair: 'Pairing dialog: the code and the pairing address',
+    connect: 'Main screen: this is the connect address',
   };
   const GUIDE = {
     mac: { title: 'Install adb on macOS', steps: [
@@ -75,6 +79,16 @@ const Guide = (() => {
         await sleep(380);
       }
       if (alive()) s.insertAdjacentHTML('beforeend', '<div class="toast">You are now a developer!</div>');
+    } else if (scene === 'wifi') {
+      s.innerHTML = '<h6>Wi-Fi</h6><div class="li hl">Office-Wifi <span>✓</span></div><div class="li">Guest <span></span></div><div class="li">Home <span></span></div>';
+    } else if (scene === 'wd') {
+      s.innerHTML = '<h6>Developer options</h6><div class="li">USB debugging<div class="tog on"></div></div><div class="li hl">Wireless debugging<div class="tog" id="tg"></div></div>';
+      await sleep(900);
+      if (alive()) s.querySelector('#tg').classList.add('on');
+    } else if (scene === 'pair') {
+      s.innerHTML = '<h6>Wireless debugging</h6><div class="dlg" style="margin-top:0"><b>Pair with device</b><p style="margin:0">Wi-Fi pairing code</p><div class="bigc">482 913</div><p style="margin:0">IP address &amp; Port<br><b class="mono" style="font-size:10.5px;display:inline">192.168.1.20:37215</b></p></div><div class="li" style="margin-top:8px">Pair with QR code<span>›</span></div>';
+    } else if (scene === 'connect') {
+      s.innerHTML = '<h6>Wireless debugging</h6><div class="li">Device name<span>Phone</span></div><div class="li hl" style="flex-direction:column;align-items:flex-start;gap:2px"><span style="color:var(--muted);font-size:9.5px">IP address &amp; Port</span><b class="mono" style="font-size:11.5px">192.168.1.20:41231</b></div><div class="li">Pair device with pairing code<span>›</span></div>';
     } else if (scene === 'usb') {
       s.innerHTML = '<h6>Developer options</h6><div class="li">Stay awake<div class="tog"></div></div><div class="li hl">USB debugging<div class="tog" id="tg"></div></div><div class="li">Wireless debugging<div class="tog"></div></div>';
       await sleep(900);

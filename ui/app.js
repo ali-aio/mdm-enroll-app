@@ -257,6 +257,7 @@ function openHelp(tab) {
 function closeHelp() { $('drawer').classList.remove('open'); helpTok = {}; }
 function drawTab() {
   const body = $('drawerBody'), tok = (helpTok = {});
+  $('drawer').classList.toggle('wide', helpTab === 'wifi');
   const alive = () => helpTok === tok && $('drawer').classList.contains('open') && helpTab === 'phone';
   document.querySelectorAll('#drawer .dt button').forEach((b) => b.classList.toggle('on', b.dataset.t === helpTab));
   if (helpTab === 'phone') {
@@ -270,6 +271,12 @@ function drawTab() {
     body.innerHTML = status + Guide.guideHTML(os, adb.os) + '<button class="cc-btn primary sm" data-retry style="margin-top:10px">↻ Retry</button>';
     Guide.wire(body, (o) => { guideOs = o; drawTab(); });
     body.querySelector('[data-retry]').onclick = async (e) => { await retryAdb(e.currentTarget); drawTab(); };
+  } else if (helpTab === 'wifi') {
+    Wifi.draw(body, {
+      invoke, esc, Guide,
+      alive: () => helpTok === tok && $('drawer').classList.contains('open') && helpTab === 'wifi',
+      onConnected: () => { heroKey = ''; tick(); },
+    });
   } else {
     body.innerHTML = Guide.troubleHTML;
   }
