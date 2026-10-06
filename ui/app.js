@@ -32,9 +32,17 @@ const store = {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // Follow the OS light/dark setting, and tell the CSS which OS we are on (the Mac sidebar is translucent).
+// Appearance: Auto (follow the system), Light or Dark — chosen in the account menu, remembered.
 const mq = window.matchMedia('(prefers-color-scheme: dark)');
-const applyTheme = () => document.documentElement.setAttribute('data-theme', mq.matches ? 'dark' : 'light');
-applyTheme(); mq.addEventListener('change', applyTheme);
+const themeChoice = () => { try { return localStorage.getItem('theme') || 'system'; } catch { return 'system'; } };
+function applyTheme(animate) {
+  const t = themeChoice();
+  const dark = t === 'dark' || (t === 'system' && mq.matches);
+  const root = document.documentElement;
+  if (animate) { root.classList.add('theming'); setTimeout(() => root.classList.remove('theming'), 350); }
+  root.setAttribute('data-theme', dark ? 'dark' : 'light');
+}
+applyTheme(false); mq.addEventListener('change', () => applyTheme(true));
 const UA = navigator.platform || navigator.userAgent || '';
 document.documentElement.dataset.os = /Mac/i.test(UA) ? 'mac' : /Win/i.test(UA) ? 'win' : 'linux';
 
@@ -871,7 +879,25 @@ $('signinForm').addEventListener('submit', async (e) => {
   $('signinForm').classList.remove('working');
 });
 $('signOut').addEventListener('click', async () => { $('acctMenu').hidden = true; await invoke('sign_out'); goSignIn(); });
-$('acctBtn').addEventListener('click', (e) => { e.stopPropagation(); $('acctMail').textContent = currentUser; $('acctMenu').hidden = !$('acctMenu').hidden; });
+function syncThemeSeg(animate) {
+  const seg = $('themeSeg'), t = themeChoice();
+  seg.querySelectorAll('button').forEach((b) => { b.classList.toggle('on', b.dataset.theme === t); b.setAttribute('aria-checked', b.dataset.theme === t); });
+  const on = seg.querySelector('button.on'), th = seg.querySelector('.th');
+  if (!on || !th) return;
+  if (!animate) th.style.transition = 'none';
+  th.style.left = on.offsetLeft + 'px'; th.style.width = on.offsetWidth + 'px';
+  if (!animate) { void th.offsetWidth; th.style.transition = ''; }
+}
+$('acctBtn').addEventListener('click', (e) => {
+  e.stopPropagation(); $('acctMail').textContent = currentUser; $('acctMenu').hidden = !$('acctMenu').hidden;
+  if (!$('acctMenu').hidden) syncThemeSeg(false);
+});
+$('themeSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-theme]'); if (!b) return;
+  e.stopPropagation();
+  try { localStorage.setItem('theme', b.dataset.theme); } catch {}
+  syncThemeSeg(true); applyTheme(true);
+});
 document.addEventListener('click', (e) => { if (!e.target.closest('.acctwrap')) $('acctMenu').hidden = true; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === document.body) $('go')?.click(); });
 

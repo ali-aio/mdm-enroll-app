@@ -51,7 +51,13 @@
       <button class="tbtn helpbtn" id="helpBtn" aria-label="Help" title="Help"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/></svg></button>
       <div class="acctwrap">
         <button class="acct" id="acctBtn" aria-haspopup="menu" title="Account"><span class="pfp" id="pfp" aria-hidden="true"></span><span id="whoName" class="who"></span></button>
-        <div class="menu" id="acctMenu" role="menu" hidden><div class="mhead" id="acctMail"></div><button class="mitem" id="signOut" role="menuitem">Sign Out</button></div>
+        <div class="menu" id="acctMenu" role="menu" hidden>
+          <div class="mhead" id="acctMail"></div>
+          <div class="mlabel">Appearance</div>
+          <div class="seg mseg" id="themeSeg" role="radiogroup" aria-label="Appearance"><span class="th"></span><button data-theme="system" role="radio">Auto</button><button data-theme="light" role="radio">Light</button><button data-theme="dark" role="radio">Dark</button></div>
+          <div class="msep"></div>
+          <button class="mitem" id="signOut" role="menuitem">Sign Out</button>
+        </div>
       </div>
     </header>
     <div class="pbar"><i id="pbar"></i></div>

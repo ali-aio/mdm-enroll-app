@@ -234,6 +234,11 @@ html[data-os="mac"] .side-top { height: 40px; }                          /* room
 .pfp.sk { background: linear-gradient(90deg, var(--hover) 25%, var(--press) 50%, var(--hover) 75%); background-size: 200% 100%; }
 .menu { position: absolute; right: 0; top: 34px; min-width: 210px; z-index: 50; padding: 5px; border-radius: 10px; background: color-mix(in srgb, var(--row) 88%, transparent); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); box-shadow: var(--shadow-pop); animation: pop .16s var(--ease) both; transform-origin: top right; }
 .mhead { font-size: 11px; color: var(--muted); padding: 5px 9px 6px; border-bottom: .5px solid var(--sep); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; }
+.mlabel { font-size: 11px; color: var(--muted); padding: 6px 9px 4px; }
+.mseg { display: flex; margin: 0 6px 6px; }
+.mseg button { flex: 1; min-width: 0; padding: 3px 8px; }
+.msep { height: .5px; background: var(--sep); margin: 4px 4px; }
+html.theming, html.theming * { transition: background-color .3s ease, color .3s ease, border-color .3s ease, box-shadow .3s ease, fill .3s, stroke .3s !important; }
 .mitem { display: block; width: 100%; text-align: left; font: inherit; font-size: 13px; color: var(--text); background: transparent; border: 0; padding: 4px 9px; border-radius: 5px; cursor: default; }
 .mitem:hover { background: var(--accent); color: #fff; }
 .pbar { height: 2px; flex: none; position: relative; overflow: hidden; }
