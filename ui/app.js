@@ -96,9 +96,10 @@ function mergeDevices(rows) {
     return h.includes(':') ? hostOf(h) : '';
   };
   const hostSerial = new Map();                       // IP -> serial, from every connection that knows both
+  savedPhones.forEach((p) => { if (p.host && p.serial) hostSerial.set(p.host, p.serial); });   // remembered from earlier sightings
   rows.forEach((d) => { const h = hostOfHandle(d.handle), s = d.serial || nameSerial(d.handle); if (h && s) hostSerial.set(h, s); });
   const keyOf = (d) => {
-    if (d.adb_state !== 'device') return '';
+    // Offline transports (a phone that went to sleep) still belong to their phone: merge them too.
     const h = hostOfHandle(d.handle);
     const s = d.serial || nameSerial(d.handle) || (h && hostSerial.get(h)) || '';
     return s ? 's:' + s : h ? 'h:' + h : '';
