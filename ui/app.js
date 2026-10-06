@@ -73,16 +73,33 @@ const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
 
+// Wi-Fi phones are remembered with whatever adb told us about them, so a saved entry still
+// says what it is after it disconnects.
+function learnPhones() {
+  let changed = false;
+  devices.forEach((d) => {
+    if (!d.handle.includes(':') || d.status === 'unauthorized' || d.status === 'offline') return;
+    const host = d.handle.split(':')[0];
+    let p = savedPhones.find((x) => x.host === host);
+    if (!p) { p = { host }; savedPhones.unshift(p); changed = true; }
+    const info = { name: d.name || '', serial: d.serial || '', android: d.android || '', firmware: d.status === 'firmware' };
+    for (const k in info) if (info[k] && p[k] !== info[k]) { p[k] = info[k]; changed = true; }
+  });
+  if (changed) saveSaved();
+}
+
 function renderSaved() {
   const box = $('saved');
-  // Give saved phones the name the device list learned for them.
-  savedPhones.forEach((p) => { const d = devices.find((x) => x.handle.startsWith(p.host + ':')); if (d && d.name && p.name !== d.name) { p.name = d.name; saveSaved(); } });
+  learnPhones();
   const online = (p) => devices.some((x) => x.handle.startsWith(p.host + ':'));
   const list = savedPhones.filter((p) => !online(p));
-  const sig = list.map((p) => p.host + p.name).join('|');
+  const sig = list.map((p) => [p.host, p.name, p.serial, p.android, p.firmware].join('~')).join('|');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => `<div class="sv" data-host="${esc(p.host)}"><span class="nm">${esc(p.name || p.host)}</span><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`).join('') : '';
+  box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => {
+    const meta = [p.host, p.android ? 'Android ' + p.android : '', p.serial].filter(Boolean).join(' · ');
+    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span><span class="svd mono">${esc(meta)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
+  }).join('') : '';
 }
 $('saved').addEventListener('click', async (e) => {
   const row = e.target.closest('.sv');

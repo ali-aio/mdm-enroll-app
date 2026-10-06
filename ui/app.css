@@ -147,3 +147,8 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 .tile.busy .nm{color:var(--accent-text);}
 form.working input{opacity:.6;pointer-events:none;}
 @media (prefers-reduced-motion:reduce){.sk{animation:none;}}
+
+.sv{align-items:center;}
+.sv .svm{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
+.sv .svm .nm{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sv .svd{font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
