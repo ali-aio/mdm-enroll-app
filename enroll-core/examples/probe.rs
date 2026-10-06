@@ -19,6 +19,9 @@ fn main() {
             timed("owner", || adb.owner(&d.handle));
             timed("accounts", || adb.account_count(&d.handle));
             timed("firmware", || adb.firmware(&d.handle));
+            if !d.handle.contains(':') && !d.handle.contains("._adb-tls-") {
+                timed("wifi ip", || adb.device_ip(&d.handle)); // read-only; to_wifi itself is not run here
+            }
         }
     }
 }

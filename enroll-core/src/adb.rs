@@ -87,6 +87,38 @@ pub fn is_network_handle(h: &str) -> bool {
     h.contains(':') || h.contains("._adb-tls-")
 }
 
+/// The phone's Wi-Fi IPv4 address out of `ip -f inet addr show wlan0` (`inet 192.168.1.20/24 …`)
+/// or `ip route` (`… dev wlan0 … src 192.168.1.20`). Loopback and link-local are ignored.
+pub fn parse_wlan_ip(out: &str) -> Option<String> {
+    let ok = |ip: &str| {
+        ip.split('.').count() == 4
+            && ip.split('.').all(|o| o.parse::<u8>().is_ok())
+            && !ip.starts_with("127.")
+            && !ip.starts_with("169.254.")
+            && ip != "0.0.0.0"
+    };
+    for line in out.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("inet ") {
+            if let Some(ip) = rest.split(|c| c == '/' || c == ' ').next() {
+                if ok(ip) {
+                    return Some(ip.to_string());
+                }
+            }
+        }
+        if t.contains(" dev wlan") || t.contains(" dev wifi") {
+            if let Some(after) = t.split(" src ").nth(1) {
+                if let Some(ip) = after.split_whitespace().next() {
+                    if ok(ip) {
+                        return Some(ip.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// `host:port` where host is an IPv4 address or a plain hostname. Anything adb would
 /// treat as a flag, or a shell would, is rejected.
 pub fn valid_hostport(a: &str) -> bool {
@@ -155,6 +187,40 @@ impl Adb {
             return Err(format!("adb could not disconnect it: {}", out.trim()));
         }
         Ok("Disconnected.".into())
+    }
+
+    /// The phone's Wi-Fi address, read over the cable.
+    pub fn device_ip(&self, handle: &str) -> Option<String> {
+        for cmd in [vec!["ip", "-f", "inet", "addr", "show", "wlan0"], vec!["ip", "route"]] {
+            if let Some(ip) = self.shell(handle, &cmd).ok().and_then(|o| parse_wlan_ip(&o)) {
+                return Some(ip);
+            }
+        }
+        None
+    }
+
+    /// For a phone on a USB cable: switches its adb to TCP port 5555 and connects to it over
+    /// Wi-Fi. No pairing and no code, works on any Android version; lasts until the phone
+    /// restarts. The cable can then be unplugged.
+    pub fn to_wifi(&self, handle: &str) -> Result<String, String> {
+        if !valid_handle(handle) {
+            return Err("invalid device handle".into());
+        }
+        if is_network_handle(handle) {
+            return Err("This phone is already connected over Wi-Fi.".into());
+        }
+        let ip = self
+            .device_ip(handle)
+            .ok_or("Couldn't read the phone's Wi-Fi address. Make sure it is connected to Wi-Fi, on the same network as this computer.")?;
+        let out = self.run_on(handle, &["tcpip", "5555"]).map_err(|e| format!("The phone refused to switch: {e}"))?;
+        if !out.to_lowercase().contains("restarting in tcp mode") {
+            return Err(format!("The phone didn't switch to Wi-Fi mode: {}", out.trim()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2000)); // adbd restarts; the USB link blips
+        let addr = format!("{ip}:5555");
+        self.connect(&addr)
+            .map(|_| format!("On Wi-Fi at {addr}. You can unplug the cable."))
+            .map_err(|e| format!("The phone switched, but connecting failed. Is this computer on the same Wi-Fi as the phone? ({e})"))
     }
 
     /// Makes the phone ask "Allow USB debugging?" again: drops the connection and
@@ -524,6 +590,24 @@ mod tests {
     fn unanswered_property_reads_are_unresponsive() {
         assert!(!Details::default().responsive());
         assert!(Details { model: "T7".into(), ..Default::default() }.responsive());
+    }
+
+    #[test]
+    fn wlan_ip_parsing() {
+        let addr = "27: wlan0: <BROADCAST> mtu 1500\n    inet 192.168.1.20/24 brd 192.168.1.255 scope global wlan0\n";
+        assert_eq!(parse_wlan_ip(addr).as_deref(), Some("192.168.1.20"));
+        let route = "10.32.0.0/16 dev wlan0 proto kernel scope link src 10.32.2.167\n";
+        assert_eq!(parse_wlan_ip(route).as_deref(), Some("10.32.2.167"));
+        assert_eq!(parse_wlan_ip("    inet 127.0.0.1/8 scope host lo\n"), None);
+        assert_eq!(parse_wlan_ip("inet 169.254.3.4/16 scope link wlan0"), None);
+        assert_eq!(parse_wlan_ip(""), None);
+    }
+
+    #[test]
+    fn to_wifi_refuses_network_and_bad_handles_without_running_adb() {
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
+        assert!(a.to_wifi("192.168.1.5:5555").unwrap_err().contains("already"));
+        assert!(a.to_wifi("x; reboot").is_err());
     }
 
     #[test]

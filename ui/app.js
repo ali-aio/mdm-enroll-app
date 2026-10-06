@@ -288,6 +288,11 @@ function renderHero() {
   } else {
     hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">${esc(d.note || d.status)}</p>`;
   }
+  // A phone on a cable can be moved to Wi-Fi in one click: no pairing, no code.
+  if (!isNet(d) && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status) && !hero.querySelector('[data-towifi]')) {
+    hero.insertAdjacentHTML('beforeend', `<div class="acts"><button class="cc-btn" data-towifi>${ICON.wifi.replace('class="ic"', 'class="ic" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:6px"')}Switch to Wi-Fi</button></div>
+      <div class="amsg towifi" style="font-size:11px;color:var(--muted)">No pairing and no codes. Reads the phone’s IP over the cable, then connects to it. You can unplug it afterwards. It stays on Wi-Fi until the phone restarts.</div>`);
+  }
   // Any phone connected over the network can be forgotten, whatever its state.
   if (isNet(d) && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
     hero.insertAdjacentHTML('beforeend', '<div class="acts"><button class="cc-btn sm" data-forget title="Disconnects it from this computer. Its MDM enrollment is not affected.">Forget this device</button></div><div class="amsg" style="font-size:11px;color:var(--muted)">Only disconnects it from this computer. It stays enrolled in the MDM.</div>');
@@ -310,6 +315,21 @@ $('hero').addEventListener('click', async (e) => {
   if (e.target.closest('[data-openhelp]')) { e.preventDefault(); return openHelp('tr'); }
   const d = devices.find((x) => x.handle === selected);
   if (!d) return;
+  const sw = e.target.closest('[data-towifi]');
+  if (sw) {
+    const label = sw.innerHTML, msg = document.querySelector('#hero .towifi');
+    sw.disabled = true; sw.innerHTML = '<span class="spin"></span> Switching…';
+    try {
+      const m = await invoke('device_to_wifi', { handle: d.handle });
+      msg.innerHTML = `<div class="wmsg ok" style="font-size:12px">${esc(m)}</div>`;
+      sw.innerHTML = 'On Wi-Fi ✓';
+      setTimeout(() => { heroKey = ''; tick(); }, 800);
+    } catch (err) {
+      msg.innerHTML = `<div class="wmsg bad" style="font-size:12px">${esc(err)}</div>`;
+      sw.disabled = false; sw.innerHTML = label;
+    }
+    return;
+  }
   const act = e.target.closest('[data-reprompt],[data-forget]');
   if (act) {
     const forget = act.hasAttribute('data-forget'), label = act.textContent, msg = hero_amsg();
