@@ -192,3 +192,17 @@ form.working input{opacity:.6;pointer-events:none;}
 .ri .conn{width:auto;min-width:34px;justify-content:flex-end;gap:4px;}
 .ri .conn .ic{flex:none;}
 .mergetip{margin-top:10px;background:var(--ok-bg);color:var(--ok);border-radius:10px;padding:7px 12px;font-size:12px;font-weight:600;animation:slidein .35s both;}
+
+/* device panel (option A): chips, "?" popover, icon buttons */
+.pchips{display:flex;gap:5px;flex-wrap:wrap;justify-content:center;margin:2px 0 4px;}
+.pchip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--surface-3);color:var(--muted);animation:pop .3s both;}
+.pchip .ic{width:12px;height:12px;}
+.pchip.ok{background:var(--ok-bg);color:var(--ok);}.pchip.bad{background:var(--danger-bg);color:var(--danger);}.pchip.warn{background:var(--warn-bg);color:var(--warn);}
+.acts2{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:14px;}
+.ibtn{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--muted);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;position:relative;font:inherit;transition:color .15s,border-color .15s;}
+.ibtn .ic{width:16px;height:16px;}
+.ibtn:hover,.ibtn:focus-visible{color:var(--accent-text);border-color:var(--accent-edge);}
+.ibtn::after{content:attr(data-tip);position:absolute;bottom:42px;left:50%;transform:translateX(-50%);background:#1b1d24;color:#fff;font-size:11px;font-weight:600;white-space:nowrap;padding:5px 9px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .15s;z-index:5;}
+.ibtn:hover::after,.ibtn:focus-visible::after{opacity:1;}
+.hpop{position:absolute;left:0;right:0;margin:0 auto;top:210px;width:min(300px,86%);background:var(--surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 14px 34px rgba(20,22,40,.28);padding:12px 14px;text-align:left;font-size:12px;line-height:1.55;z-index:6;animation:pop .22s both;}
+.hpop ol{margin:4px 0 0;padding-left:18px;}

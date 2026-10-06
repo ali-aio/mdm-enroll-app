@@ -15,6 +15,11 @@ const ICON = {
   tablet: svg('<rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M10.5 17h3"/>'),
   usb: svg('<path d="M12 3v14M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 9l4-2v3M12 12l-4-2V7"/>'),
   wifi: svg('<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>'),
+  x: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  user: svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/>'),
+  q: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>'),
+  cloud: svg('<path d="M7 18a4 4 0 0 1-.6-7.9A6 6 0 0 1 18 9.5 4.3 4.3 0 0 1 17.5 18z"/>'),
+  check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>'),
 };
 const PHONE = ICON.phone;
@@ -64,6 +69,7 @@ let adb = { found: true, os: 'linux', version: '' };   // from adb_status
 let guideOs = null;            // OS tab shown in the adb help (defaults to this computer)
 let emptySince = 0, tipShown = false;
 let heroTok = {};
+let fixOpen = false, fixFor = '';
 let wifiMode = false, wifiPrefill = '';
 let savedPhones = [];
 try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
@@ -253,7 +259,7 @@ function renderHero() {
   const r = d && run[d.handle];
   const key = !adb.found ? 'adb|' + (guideOs || adb.os)
     : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || ''].join('|') : 'empty';
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', fixOpen ? 'f' : '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
   const tok = (heroTok = {});
@@ -299,61 +305,66 @@ function renderHero() {
     tipShown = false;
     return;
   }
-  const head = `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
-    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}${d.android ? ' · Android ' + esc(d.android) : ''} · ${connLabel(d)}</div>`;
+  // ---- the device panel: chips for facts, one short line for a problem, "?" for the how-to,
+  // ---- icon buttons (with tooltips) for the occasional actions.
+  if (fixFor !== d.handle) { fixOpen = false; fixFor = d.handle; }
+  const chip = (cls, html, tip = '') => `<span class="pchip ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
+  const connChip = chip(d.hasUsb && d.wifiHandle ? 'ok' : '', connIcons(d) + ' ' + connLabel(d));
+  const chipRow = (...extra) => `<div class="pchips">${d.android ? chip('', 'Android ' + esc(d.android)) : ''}${connChip}${extra.join('')}</div>`;
+  const head = (...extra) => `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
+    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}</div>${chipRow(...extra)}`;
+  const ibtn = (attrs, tip, icon) => `<button class="ibtn" ${attrs} data-tip="${esc(tip)}" aria-label="${esc(tip)}">${icon}</button>`;
 
   if (d.status === 'enrolling') {
     hero.innerHTML = `<div class="bigph">${iconOf(d)}</div><h2>Enrolling ${esc(d.name)}…</h2><div data-tl="${esc(d.handle)}">${timeline(r?.step ?? 0)}</div>`;
   } else if (d.status === 'enrolled') {
     const burst = r?.done ? '<div class="ring"></div>' : '';
     hero.innerHTML = `<div class="okbig">${CHECK}</div><h2 style="margin-top:8px">Enrolled</h2>
-      <div class="mono" style="color:var(--muted)">${esc(d.name)} · ${esc(d.class || 'device')}${d.agent_version ? ' · agent ' + esc(d.agent_version) : ''}</div>
+      <div class="mono" style="color:var(--muted)">${esc(d.name)}</div>
+      ${chipRow(chip('ok', esc(d.class || 'device')), d.agent_version ? chip('', 'agent ' + esc(d.agent_version)) : '')}
       <button class="cc-btn primary" id="next" style="margin-top:12px">Next device</button>${burst}`;
     if (r) r.done = false;
-    heroKey = [d.handle, d.status, classOf(d.handle), '', ''].join('|');
+    heroKey = [d.handle, d.status, classOf(d.handle), '', '', '', '', fixOpen ? 'f' : ''].join('|');
   } else if (d.status === 'firmware') {
     const gone = d.server_status === 'retired' || d.server_status === 'wiped';
-    const seen = d.server_seen
-      ? `<div class="wmsg ok">Registered in the MDM${d.class ? ' as <b>' + esc(d.class) + '</b>' : ''}. Nothing to do here.</div>`
-      : gone
-        ? `<div class="wmsg bad">The MDM has this device marked <b>${esc(d.server_status)}</b>. Restore it from the dashboard if it should be active.</div>`
-        : '<div class="wmsg" style="background:var(--surface-3)">Not seen by the MDM yet. It enrolls itself the first time it checks in over the network, so make sure it has internet.</div>';
-    hero.innerHTML = `${head}<div class="okbig" style="margin-top:6px">${CHECK}</div><h2 style="margin-top:6px">Already runs AIO MDM firmware</h2>
-      <div class="mono" style="color:var(--muted)">MDM client ${esc(d.firmware_version || '—')}${d.build ? ' · build ' + esc(d.build) : ''}</div>
-      <div class="amsg" style="margin-top:4px">${seen}</div>
-      ${isNet(d) ? '<div class="acts"><button class="cc-btn sm" data-forget>Forget this device</button></div>' : ''}`;
+    const reg = d.server_seen ? chip('ok', ICON.cloud + ' Registered', d.class ? 'Registered in the MDM as ' + d.class : '')
+      : gone ? chip('bad', esc(d.server_status), 'The MDM has this device marked ' + d.server_status + '. Restore it from the dashboard.')
+      : chip('warn', 'Not registered yet', 'It enrolls itself the first time it checks in over the network, so it needs internet.');
+    hero.innerHTML = head(chip('ok', ICON.check + ' AIO firmware', 'MDM client ' + (d.firmware_version || '—') + (d.build ? ' · build ' + d.build : '')), reg);
   } else if (d.status === 'blocked') {
-    hero.innerHTML = `${head}<div class="fix">${esc(d.note)}<br>Then plug it in again.</div>`;
+    const why = String(d.note || 'Blocked').split(' — ')[0];
+    const isAccount = /account/i.test(d.note || '');
+    hero.innerHTML = head(chip('bad', ICON.user + ' ' + esc(why))) +
+      `<div class="row"><button class="cc-btn sm" data-fix>How to fix ${ICON.q.replace('class="ic"', 'class="ic" style="width:13px;height:13px;display:inline-block;vertical-align:-2px"')}</button></div>` +
+      (fixOpen ? `<div class="hpop"><b>How to fix</b><ol><li>Factory reset the phone.</li>${isAccount ? '<li>Don’t sign in to Google.</li>' : ''}<li>Plug it in again.</li></ol></div>` : '');
   } else if (d.status === 'unauthorized') {
-    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">Look at the device screen and tap <b>Allow</b> on the USB debugging prompt.</p>
-      <div class="acts"><button class="cc-btn primary" data-reprompt>Show the popup again</button>${isNet(d) ? '<button class="cc-btn" data-forget>Forget this device</button>' : ''}</div><div class="amsg"></div>
+    hero.innerHTML = head(chip('warn', 'Unauthorized')) +
+      `<div class="acts"><button class="cc-btn primary" data-reprompt>Show the popup again</button></div>
       <div class="ph-slot" style="margin-top:8px"></div>`;
     Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
   } else if (d.status === 'ready') {
     const cls = classOf(d.handle);
     const err = r?.error ? `<div class="fix shake">${esc(r.error)}</div>` : '';
-    hero.innerHTML = `${head}<div class="q">What is this device used for?</div>
-      <div class="chips">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
-      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button>${err}
-      ${isNet(d) ? '<div class="acts"><button class="cc-btn sm" data-forget>Forget this device</button></div><div class="amsg"></div>' : ''}`;
+    hero.innerHTML = `${head()}<div class="chips" style="margin-top:6px">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
+      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button>${err}`;
   } else {
-    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">${esc(d.note || d.status)}</p>`;
+    hero.innerHTML = head(chip('warn', esc(String(d.note || d.status).split('.')[0])));
   }
-  // A phone on a cable can be moved to Wi-Fi in one click: no pairing, no code.
-  if (!isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status) && !hero.querySelector('[data-towifi]')) {
-    hero.insertAdjacentHTML('beforeend', `<div class="acts"><button class="cc-btn" data-towifi>${ICON.wifi.replace('class="ic"', 'class="ic" style="width:14px;height:14px;display:inline-block;vertical-align:-2px;margin-right:6px"')}Switch to Wi-Fi</button></div>
-      <div class="amsg towifi" style="font-size:11px;color:var(--muted)">No pairing and no codes. Reads the phone’s IP over the cable, then connects to it. You can unplug it afterwards. It stays on Wi-Fi until the phone restarts.</div>`);
-  }
-  // On the cable AND on Wi-Fi: say so, and let the Wi-Fi link be forgotten on its own.
-  if (d.hasUsb && d.wifiHandle && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
-    hero.insertAdjacentHTML('beforeend', `<div class="mergetip">Connected by USB and Wi-Fi — you can unplug the cable.</div>
-      <div class="amsg" style="font-size:11px;color:var(--muted)">Connections: USB · <span class="mono">${esc(d.wifiHandle)}</span> <button class="cc-btn sm" data-forget data-h="${esc(d.wifiHandle)}" title="Disconnects the Wi-Fi link only">Forget Wi-Fi</button></div>`);
-  }
-  // Any phone connected over the network can be forgotten, whatever its state.
-  if (isNet(d) && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
-    hero.insertAdjacentHTML('beforeend', '<div class="acts"><button class="cc-btn sm" data-forget title="Disconnects it from this computer. Its MDM enrollment is not affected.">Forget this device</button></div><div class="amsg" style="font-size:11px;color:var(--muted)">Only disconnects it from this computer. It stays enrolled in the MDM.</div>');
+
+  // Occasional actions as icon buttons. Wi-Fi switch for a cable-only phone; "OK to unplug" +
+  // forget-the-Wi-Fi-link when it is on both; plain forget for a Wi-Fi-only phone.
+  if (d.status !== 'enrolling' && !hero.querySelector('.towifi')) {
+    let btns = '';
+    if (d.hasUsb && d.wifiHandle) btns = chip('ok', 'OK to unplug') + ibtn(`data-forget data-h="${esc(d.wifiHandle)}"`, 'Forget the Wi-Fi link', ICON.x);
+    else if (isNet(d)) btns = ibtn('data-forget', 'Forget (stays enrolled in the MDM)', ICON.x);
+    else if (['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status)) btns = ibtn('data-towifi', 'Switch to Wi-Fi (no pairing needed)', ICON.wifi);
+    hero.insertAdjacentHTML('beforeend', `${btns ? `<div class="acts2">${btns}</div>` : ''}<div class="amsg towifi"></div>`);
   }
 }
+
+document.addEventListener('click', (e) => {
+  if (fixOpen && !e.target.closest('.hpop,[data-fix]')) { fixOpen = false; heroKey = ''; renderHero(); }
+});
 
 function refresh() { renderRail(); renderHero(); }
 
@@ -371,14 +382,15 @@ $('hero').addEventListener('click', async (e) => {
   if (e.target.closest('[data-openhelp]')) { e.preventDefault(); return openHelp('tr'); }
   const d = devices.find((x) => x.handle === selected);
   if (!d) return;
+  if (e.target.closest('[data-fix]')) { fixOpen = !fixOpen; heroKey = ''; return renderHero(); }
   const sw = e.target.closest('[data-towifi]');
   if (sw) {
     const label = sw.innerHTML, msg = document.querySelector('#hero .towifi');
-    sw.disabled = true; sw.innerHTML = '<span class="spin"></span> Switching…';
+    sw.disabled = true; sw.innerHTML = '<span class="spin"></span>';
     try {
       const m = await invoke('device_to_wifi', { handle: d.handle });
       msg.innerHTML = `<div class="wmsg ok" style="font-size:12px">${esc(m)}</div>`;
-      sw.innerHTML = 'On Wi-Fi ✓';
+      sw.innerHTML = ICON.check;
       setTimeout(() => { heroKey = ''; tick(); }, 800);
     } catch (err) {
       msg.innerHTML = `<div class="wmsg bad" style="font-size:12px">${esc(err)}</div>`;
@@ -388,8 +400,8 @@ $('hero').addEventListener('click', async (e) => {
   }
   const act = e.target.closest('[data-reprompt],[data-forget]');
   if (act) {
-    const forget = act.hasAttribute('data-forget'), label = act.textContent, msg = hero_amsg();
-    act.disabled = true; act.innerHTML = '<span class="spin"></span> Working…';
+    const forget = act.hasAttribute('data-forget'), label = act.innerHTML, msg = hero_amsg();
+    act.disabled = true; act.innerHTML = act.classList.contains('ibtn') ? '<span class="spin"></span>' : '<span class="spin"></span> Working…';
     try {
       const target = act.dataset.h || d.handle;
       const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: target });
@@ -399,7 +411,7 @@ $('hero').addEventListener('click', async (e) => {
     } catch (err) {
       if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
     }
-    act.disabled = false; act.textContent = label;
+    act.disabled = false; act.innerHTML = label;
     return tick();
   }
   const chip = e.target.closest('[data-c]');
