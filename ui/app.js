@@ -126,6 +126,7 @@ function learnPhones() {
 
 // ---- Phones found on the network (Wireless debugging is on) ----
 let found = [];            // [{ name, addr }]
+let pairScreens = [];      // pairing dialogs open on phones: [{ name, addr }]
 let discTimer = null, discBusy = false;
 async function discover() {
   if (discBusy || !adb.found || $('app').hidden) return;
@@ -133,6 +134,9 @@ async function discover() {
   try {
     const svcs = await invoke('wifi_discover');
     found = svcs.filter((x) => x.kind === 'connect');
+    pairScreens = svcs.filter((x) => x.kind === 'pairing');
+    renderPairing();
+    autoPairPopup();
     renderFound();
   } catch {} finally { discBusy = false; }
 }
@@ -163,6 +167,95 @@ $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-go]')) openPair();
 });
+
+
+// ---- Pairing screens: listed in the rail, and a popup asks for the code ----
+const serialOfSvc = (s) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(s.name || ''); return m ? m[1] : ''; };
+const pairName = (s) => (savedPhones.find((p) => s.addr.startsWith(p.host + ':')) || {}).name || 'Phone';
+let pairAddr = '', pairBusy = false;
+const pairDismissed = new Set();    // closed by the person: don't pop up again until it goes away and returns
+const pairAutoOpened = new Set();   // already popped up once
+
+function renderPairing() {
+  const box = $('pairNet');
+  const sig = pairScreens.map((s) => s.addr + pairName(s)).join('|');
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = pairScreens.length ? `<div class="sh"><span class="wave2"></span>Pairing requests</div>` + pairScreens.map((s) => {
+    const sn = serialOfSvc(s);
+    return `<button class="pr-row" data-addr="${esc(s.addr)}"><div class="pr-a"><b>${esc(pairName(s))} · pairing</b><span class="mono">${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span></div><span class="pr-go">Enter code ›</span></button>`;
+  }).join('') : '';
+}
+$('pairNet').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-addr]');
+  if (!b) return;
+  const s = pairScreens.find((x) => x.addr === b.dataset.addr);
+  if (s) { pairDismissed.delete(s.addr); openPairModal(s); }
+});
+
+function openPairModal(s) {
+  pairAddr = s.addr; pairBusy = false;
+  const sn = serialOfSvc(s);
+  $('pmIc').innerHTML = ICON.phone;
+  $('pmTitle').textContent = 'Pair with ' + pairName(s);
+  $('pmMeta').textContent = s.addr.split(':')[0] + (sn ? ' · ' + sn : '');
+  $('pmAsk').textContent = 'Enter the 6-digit code shown on the phone.';
+  $('pmCode').value = ''; $('pmCode').disabled = false;
+  $('pmMsg').innerHTML = '';
+  $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
+  $('pairModal').hidden = false;
+  setTimeout(() => $('pmCode').focus(), 50);
+}
+function closePairModal() { $('pairModal').hidden = true; pairAddr = ''; pairBusy = false; }
+function dismissPairModal() { if (pairAddr) pairDismissed.add(pairAddr); closePairModal(); }
+$('pmCancel').addEventListener('click', dismissPairModal);
+$('pairModal').addEventListener('click', (e) => { if (e.target === $('pairModal') && !pairBusy) dismissPairModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('pairModal').hidden && !pairBusy) dismissPairModal(); });
+$('pmCode').addEventListener('input', () => {
+  const c = $('pmCode'); c.value = c.value.replace(/\D/g, '').slice(0, 6);
+  $('pmGo').disabled = pairBusy || c.value.length !== 6;
+});
+$('pmCode').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('pmGo').disabled) $('pmGo').click(); });
+$('pmGo').addEventListener('click', async () => {
+  if (!pairAddr || pairBusy) return;
+  pairBusy = true; $('pmCode').disabled = true; $('pmGo').disabled = true;
+  $('pmGo').innerHTML = '<span class="spin"></span> Pairing…'; $('pmMsg').innerHTML = '';
+  const t = setTimeout(() => { if (pairBusy) $('pmGo').innerHTML = '<span class="spin"></span> Connecting…'; }, 2500);
+  try {
+    const handle = await invoke('wifi_pair_connect', { addr: pairAddr, code: $('pmCode').value });
+    clearTimeout(t);
+    $('pmIc').innerHTML = CHECK; $('pmTitle').textContent = 'Paired and connected';
+    $('pmAsk').textContent = ''; $('pmCode').hidden = true; $('pmGo').hidden = true; $('pmCancel').hidden = true;
+    const host = String(handle).split(':')[0];
+    unignore(host);
+    setTimeout(() => {
+      $('pmCode').hidden = false; $('pmGo').hidden = false; $('pmCancel').hidden = false;
+      closePairModal(); selected = handle; wifiMode = false; heroKey = ''; tick();
+    }, 1100);
+  } catch (err) {
+    clearTimeout(t);
+    pairBusy = false; $('pmCode').disabled = false; $('pmGo').textContent = 'Pair';
+    $('pmGo').disabled = $('pmCode').value.length !== 6;
+    $('pmMsg').innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
+    $('pmCode').select();
+  }
+});
+
+// A NEW pairing screen pops the code popup up by itself (not while the Add-over-Wi-Fi panel is
+// open, which handles it); one the person closed stays closed until it goes away and comes back.
+function autoPairPopup() {
+  const live = new Set(pairScreens.map((s) => s.addr));
+  for (const a of [...pairAutoOpened]) if (!live.has(a)) { pairAutoOpened.delete(a); pairDismissed.delete(a); }
+  if (pairAddr && !live.has(pairAddr) && !pairBusy) {
+    // The dialog on the phone was closed while the popup was open.
+    $('pmMsg').innerHTML = '<div class="wmsg" style="background:var(--surface-3)">The pairing screen on the phone closed. Open “Pair device with pairing code” again.</div>';
+    $('pmCode').disabled = true; $('pmGo').disabled = true;
+    return;
+  }
+  if (!$('pairModal').hidden || wifiMode) return;
+  const fresh = pairScreens.find((s) => !pairAutoOpened.has(s.addr) && !pairDismissed.has(s.addr));
+  if (fresh) { pairAutoOpened.add(fresh.addr); openPairModal(fresh); }
+}
 
 function openPair() { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); }
 
@@ -528,7 +621,7 @@ function goApp(me) {
   renderSkeleton();
   showToday(); heroKey = ''; clearInterval(timer);
   tick(); timer = setInterval(tick, 2500);
-  clearInterval(discTimer); discover(); discTimer = setInterval(discover, 4000);
+  clearInterval(discTimer); discover(); discTimer = setInterval(discover, 2500);
 }
 const PALETTE = ['#f9674e', '#7a80f6', '#2f9e6f', '#d98a1c', '#c24a8e', '#3b82c4'];
 const colorOf = (u) => PALETTE[[...u].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % PALETTE.length];
@@ -562,7 +655,7 @@ function showForm(username = '', msg = '', canGoBack = false) {
 }
 
 async function goSignIn(msg = '') {
-  clearInterval(timer); clearInterval(discTimer); found = [];
+  clearInterval(timer); clearInterval(discTimer); found = []; pairScreens = []; closePairModal();
   let list = [];
   try { list = await invoke('accounts'); } catch {}
   if (!list.length) return showForm('', msg, false);

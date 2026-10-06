@@ -34,6 +34,7 @@
   <div class="focus">
     <nav class="railwrap" aria-label="Devices">
       <div class="rail" id="rail"></div>
+      <div class="saved" id="pairNet"></div>
       <div class="saved" id="foundNet"></div>
       <button class="addw" id="addWifi"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></svg>Add over Wi-Fi</button>
       <div class="saved" id="saved"></div>
@@ -45,6 +46,17 @@
     <div class="dt"><button data-t="phone" class="on">Phone</button><button data-t="pc">Computer</button><button data-t="tr">Trouble?</button></div>
     <div class="db" id="drawerBody"></div>
   </aside>
+  <div class="pm-back" id="pairModal" hidden>
+    <div class="pm-card" role="dialog" aria-modal="true" aria-labelledby="pmTitle">
+      <div class="pm-ic" id="pmIc"></div>
+      <h2 id="pmTitle">Pair with a phone</h2>
+      <div class="mono pm-meta" id="pmMeta"></div>
+      <p class="pm-ask" id="pmAsk">Enter the 6-digit code shown on the phone.</p>
+      <input class="pm-code" id="pmCode" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off" aria-label="Pairing code">
+      <div class="pm-msg" id="pmMsg" role="status"></div>
+      <div class="pm-btns"><button class="cc-btn" id="pmCancel">Cancel</button><button class="cc-btn primary" id="pmGo" disabled>Pair</button></div>
+    </div>
+  </div>
   <footer><span class="dot"></span><span id="foot">Watching for devices</span><span class="sp"></span><span id="today" class="mono"></span></footer>
 </div>
 <script src="guide.js"></script>
