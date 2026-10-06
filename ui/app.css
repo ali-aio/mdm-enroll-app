@@ -281,3 +281,11 @@ form.working input{opacity:.6;pointer-events:none;}
 .nb-empty{padding:10px;font-size:11.5px;color:var(--muted);}
 .pm-hint{margin-top:2px;}
 .pm-hint[hidden]{display:none;}
+
+/* manual `adb connect` fallback inside the pairing popup */
+.pm-conn{width:100%;display:flex;flex-direction:column;gap:8px;margin-top:6px;text-align:left;}
+.pm-conn[hidden]{display:none;}
+.pm-conn label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:700;color:var(--muted);text-transform:none;letter-spacing:0;}
+.pm-conn input{font:inherit;font-family:var(--font-mono,monospace);font-size:15px;padding:9px 12px;border-radius:12px;border:2px solid var(--border);background:var(--surface);color:var(--text);}
+.pm-conn input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);}
+.pm-conn .cc-btn{min-height:42px;border-radius:12px;font-size:13.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;}

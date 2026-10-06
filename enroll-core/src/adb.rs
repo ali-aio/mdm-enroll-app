@@ -1,6 +1,8 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::io::Read;
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::Mutex;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -117,6 +119,36 @@ pub fn parse_wlan_ip(out: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// TCP ports that accept a connection on `host` within `lo..=hi`, found with many short parallel
+/// connection attempts and a hard time budget. Used as a last resort to find a phone's adb port
+/// when it does not announce itself; on a LAN a closed port answers immediately, so this takes
+/// a few seconds. Only ever aimed at the one phone the person has just paired.
+pub fn open_ports(host: &str, lo: u16, hi: u16, per_try: Duration, budget: Duration) -> Vec<u16> {
+    let Some(ip) = (host, 0u16).to_socket_addrs().ok().and_then(|mut a| a.find(|s| s.is_ipv4())).map(|s| s.ip()) else {
+        return Vec::new();
+    };
+    let found: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+    let deadline = Instant::now() + budget;
+    const WORKERS: usize = 256;
+    std::thread::scope(|sc| {
+        for w in 0..WORKERS {
+            let found = &found;
+            sc.spawn(move || {
+                let mut port = lo as usize + w;
+                while port <= hi as usize && Instant::now() < deadline {
+                    if TcpStream::connect_timeout(&SocketAddr::new(IpAddr::V4(match ip { IpAddr::V4(v) => v, _ => return }), port as u16), per_try).is_ok() {
+                        found.lock().unwrap().push(port as u16);
+                    }
+                    port += WORKERS;
+                }
+            });
+        }
+    });
+    let mut v = found.into_inner().unwrap();
+    v.sort_unstable();
+    v
 }
 
 /// The host part of `host:port`.
@@ -276,7 +308,19 @@ impl Adb {
             }
             std::thread::sleep(Duration::from_millis(1000));
         }
-        Err("Paired, but it didn't connect. Make sure the phone and this computer are on the same Wi-Fi, keep the phone awake, and try again.".into())
+        // 3. Last resort: the phone is not announcing its connect address. Find the port its adb is
+        //    listening on by asking the phone itself, and send `adb connect` to each open one.
+        let paired_port = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok());
+        for port in open_ports(&host, 30000, 65535, Duration::from_millis(400), Duration::from_secs(12)) {
+            if Some(port) == paired_port {
+                continue;
+            }
+            let cand = format!("{host}:{port}");
+            if self.connect_once(&cand) {
+                return Ok(cand);
+            }
+        }
+        Err("Paired, but it didn't connect. Make sure the phone and this computer are on the same Wi-Fi, keep the phone awake, then enter the address from its Wireless debugging screen below.".into())
     }
 
     /// Restarts the adb helper: clears stuck or half-open connections.
@@ -300,6 +344,11 @@ impl Adb {
         } else {
             Err(format!("Pairing failed. Check the code is current (it changes if you close the dialog) and use the pairing port from that dialog, not the connect port. adb said: {}", out.trim()))
         }
+    }
+
+    /// One `adb connect` attempt, no retries: for trying several candidate addresses quickly.
+    pub fn connect_once(&self, addr: &str) -> bool {
+        valid_hostport(addr) && connect_ok(&self.run(&["connect", addr]).unwrap_or_else(|e| e))
     }
 
     /// `adb connect`, retried: the first attempt often fails right after pairing or after the
@@ -663,6 +712,16 @@ mod tests {
         assert_eq!(pairing.len(), 2);
         assert!(pairing.iter().any(|s| s.addr == "10.32.0.113:37971"));
         assert_eq!(v.iter().filter(|s| s.kind == "connect").count(), 1); // plain _adb._tcp lines are ignored
+    }
+
+    #[test]
+    fn port_finder_sees_a_listening_port_and_ignores_closed_ones() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let found = open_ports("127.0.0.1", port.saturating_sub(40), port.saturating_add(40).min(65535), Duration::from_millis(200), Duration::from_secs(5));
+        assert!(found.contains(&port), "listening port {port} not found in {found:?}");
+        assert!(found.len() <= 2, "closed ports must not be reported: {found:?}");
+        assert!(open_ports("not a host name", 1000, 1010, Duration::from_millis(50), Duration::from_secs(1)).is_empty());
     }
 
     #[test]

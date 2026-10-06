@@ -268,6 +268,7 @@ function openPairModal(s) {
   hint.innerHTML = hc && hc.class !== 'other' ? classChipHTML(hc) : '';
   $('pmCode').value = ''; $('pmCode').disabled = false;
   $('pmMsg').innerHTML = '';
+  $('pmConn').hidden = true; $('pmGo').hidden = false;
   $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
   $('pairModal').hidden = false;
   setTimeout(() => $('pmCode').focus(), 50);
@@ -282,28 +283,52 @@ $('pmCode').addEventListener('input', () => {
   $('pmGo').disabled = pairBusy || c.value.length !== 6;
 });
 $('pmCode').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('pmGo').disabled) $('pmGo').click(); });
+function pairSucceeded(handle) {
+  $('pmIc').innerHTML = CHECK; $('pmTitle').textContent = 'Paired and connected';
+  $('pmAsk').textContent = ''; $('pmMsg').innerHTML = '';
+  $('pmCode').hidden = true; $('pmGo').hidden = true; $('pmCancel').hidden = true; $('pmConn').hidden = true;
+  unignore(String(handle).split(':')[0]);
+  setTimeout(() => {
+    $('pmCode').hidden = false; $('pmGo').hidden = false; $('pmCancel').hidden = false;
+    closePairModal(); selected = handle; wifiMode = false; heroKey = ''; tick();
+  }, 1100);
+}
 $('pmGo').addEventListener('click', async () => {
   if (!pairAddr || pairBusy) return;
   pairBusy = true; $('pmCode').disabled = true; $('pmGo').disabled = true;
   $('pmGo').innerHTML = '<span class="spin"></span> Pairing…'; $('pmMsg').innerHTML = '';
   const t = setTimeout(() => { if (pairBusy) $('pmGo').innerHTML = '<span class="spin"></span> Connecting…'; }, 2500);
   try {
-    const handle = await invoke('wifi_pair_connect', { addr: pairAddr, code: $('pmCode').value });
+    pairSucceeded(await invoke('wifi_pair_connect', { addr: pairAddr, code: $('pmCode').value }));
     clearTimeout(t);
-    $('pmIc').innerHTML = CHECK; $('pmTitle').textContent = 'Paired and connected';
-    $('pmAsk').textContent = ''; $('pmCode').hidden = true; $('pmGo').hidden = true; $('pmCancel').hidden = true;
-    const host = String(handle).split(':')[0];
-    unignore(host);
-    setTimeout(() => {
-      $('pmCode').hidden = false; $('pmGo').hidden = false; $('pmCancel').hidden = false;
-      closePairModal(); selected = handle; wifiMode = false; heroKey = ''; tick();
-    }, 1100);
   } catch (err) {
     clearTimeout(t);
-    pairBusy = false; $('pmCode').disabled = false; $('pmGo').textContent = 'Pair';
-    $('pmGo').disabled = $('pmCode').value.length !== 6;
+    pairBusy = false; $('pmGo').textContent = 'Pair';
     $('pmMsg').innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
-    $('pmCode').select();
+    if (String(err).startsWith('Paired, but')) {
+      // The code is spent and the phone IS paired; all that is left is `adb connect` to its own address.
+      $('pmGo').hidden = true; $('pmCode').disabled = true;
+      $('pmAddr').value = pairAddr.split(':')[0] + ':';
+      $('pmConn').hidden = false; setTimeout(() => { $('pmAddr').focus(); $('pmAddr').setSelectionRange(99, 99); }, 50);
+    } else {
+      $('pmCode').disabled = false;
+      $('pmGo').disabled = $('pmCode').value.length !== 6;
+      $('pmCode').select();
+    }
+  }
+});
+$('pmAddr').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('pmConnBtn').click(); });
+$('pmConnBtn').addEventListener('click', async () => {
+  const addr = $('pmAddr').value.trim();
+  if (!addr || pairBusy) return;
+  pairBusy = true; $('pmConnBtn').disabled = true; $('pmConnBtn').innerHTML = '<span class="spin"></span> Connecting…';
+  $('pmMsg').innerHTML = '';
+  try {
+    await invoke('wifi_connect', { addr });       // sends `adb connect <addr>` (retried, restarts adb on the last try)
+    pairBusy = false; pairSucceeded(addr);
+  } catch (err) {
+    pairBusy = false; $('pmConnBtn').disabled = false; $('pmConnBtn').textContent = 'Connect';
+    $('pmMsg').innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
   }
 });
 

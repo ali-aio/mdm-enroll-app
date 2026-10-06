@@ -55,6 +55,10 @@
       <p class="pm-ask" id="pmAsk">Enter the 6-digit code shown on the phone.</p>
       <input class="pm-code" id="pmCode" inputmode="numeric" maxlength="6" placeholder="••••••" autocomplete="off" aria-label="Pairing code">
       <div class="pm-msg" id="pmMsg" role="status"></div>
+      <div class="pm-conn" id="pmConn" hidden>
+        <label>Phone’s address on its Wireless debugging screen<input id="pmAddr" placeholder="192.168.1.20:41231" autocomplete="off" spellcheck="false"></label>
+        <button class="cc-btn primary" id="pmConnBtn">Connect</button>
+      </div>
       <div class="pm-btns"><button class="cc-btn" id="pmCancel">Cancel</button><button class="cc-btn primary" id="pmGo" disabled>Pair</button></div>
     </div>
   </div>
