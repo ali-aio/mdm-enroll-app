@@ -151,8 +151,8 @@ function renderSaved() {
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => {
-    const meta = [p.host, p.android ? 'Android ' + p.android : '', p.serial].filter(Boolean).join(' · ');
-    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span><span class="svd mono">${esc(meta)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
+    const where = [p.host, p.android ? 'Android ' + p.android : ''].filter(Boolean).join(' · ');
+    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span>${p.serial ? `<span class="svd mono" title="Serial number">S/N ${esc(p.serial)}</span>` : ''}<span class="svd mono">${esc(where)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Connect</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
   }).join('') : '';
 }
 $('saved').addEventListener('click', async (e) => {
