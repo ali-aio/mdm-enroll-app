@@ -45,6 +45,23 @@ pub struct Profile {
     pub has_avatar: bool,
 }
 
+/// How the server sees a nearby phone's serial: fleet | production | family | lookalike | other.
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct SerialClass {
+    #[serde(default)]
+    pub class: String,
+    #[serde(default)]
+    pub production: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub family: String,
+    #[serde(default)]
+    pub family_count: u32,
+    #[serde(default)]
+    pub device_class: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct EnrollToken {
     pub token: String,
@@ -176,6 +193,21 @@ impl Session {
         (buf.len() > 8 && buf.starts_with(&[0x89, b'P', b'N', b'G'])).then_some(buf)
     }
 
+    /// Which of these serials are "ours" (see [`SerialClass`]). Up to 100 per call.
+    pub fn classify(&self, serials: &[String]) -> Result<HashMap<String, SerialClass>, ApiError> {
+        if serials.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let v: serde_json::Value = agent()
+            .post(&format!("{}/api/v1/app/classify", self.server))
+            .set("Authorization", &self.auth())
+            .send_json(serde_json::json!({ "serials": serials }))
+            .map_err(map_err)?
+            .into_json()
+            .map_err(|e| ApiError::Other(e.to_string()))?;
+        serde_json::from_value(v["serials"].clone()).map_err(|e| ApiError::Other(e.to_string()))
+    }
+
     pub fn enroll_token(&self, class: &str) -> Result<EnrollToken, ApiError> {
         agent()
             .post(&format!("{}/api/v1/app/enroll-token", self.server))
@@ -221,6 +253,21 @@ mod tests {
         assert!(!unseen.known());
         let gone: Status = serde_json::from_str(r#"{"enrolled":false,"status":"retired"}"#).unwrap();
         assert!(!gone.known());
+    }
+
+    #[test]
+    fn parses_the_classify_answer() {
+        let v: serde_json::Value = serde_json::from_str(r#"{"serials":{
+            "AT070AA2600030":{"class":"fleet","device_class":"t7"},
+            "AT070AABU00875":{"class":"production","production":"T7 batch BU","model":"07"},
+            "DK19248T41099":{"class":"family","family":"SUNMI D2s_KDS_STGL","family_count":3,"device_class":"kds"},
+            "18121FDF60022T":{"class":"other"}}}"#).unwrap();
+        let m: HashMap<String, SerialClass> = serde_json::from_value(v["serials"].clone()).unwrap();
+        assert_eq!(m["AT070AA2600030"].class, "fleet");
+        assert_eq!(m["AT070AABU00875"].production, "T7 batch BU");
+        assert_eq!(m["DK19248T41099"].device_class, "kds");
+        assert_eq!(m["DK19248T41099"].family_count, 3);
+        assert_eq!(m["18121FDF60022T"], SerialClass { class: "other".into(), ..Default::default() });
     }
 
     #[test]

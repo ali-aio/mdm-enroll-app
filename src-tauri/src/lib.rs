@@ -562,6 +562,16 @@ async fn wifi_pair(app: AppHandle, addr: String, code: String) -> Result<String,
     .map_err(|e| e.to_string())?
 }
 
+/// Server's verdict on each serial ("ours?"). Fails quietly in the UI when the server is older.
+#[tauri::command]
+async fn classify_serials(app: AppHandle, state: tauri::State<'_, State>, serials: Vec<String>) -> Result<HashMap<String, enroll_core::api::SerialClass>, String> {
+    let session = session_of(&state)?;
+    tauri::async_runtime::spawn_blocking(move || session.classify(&serials))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| auth_failed(&app, &state, e))
+}
+
 #[tauri::command]
 async fn wifi_pair_connect(app: AppHandle, addr: String, code: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -636,7 +646,7 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, profile, last_login])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

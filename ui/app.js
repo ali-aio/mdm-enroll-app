@@ -125,7 +125,7 @@ function mergeDevices(rows) {
 }
 const connIcons = (d) => (d.hasUsb ? ICON.usb : '') + (d.wifiHandle ? ICON.wifi : '');
 const connLabel = (d) => (d.hasUsb && d.wifiHandle ? 'USB + Wi-Fi' : d.wifiHandle ? 'Wi-Fi' : 'USB');
-const classOf = (h) => picked[h] || store.get('class', 'dongle');
+const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.handle === h)) || {}).serial) || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
 
@@ -149,6 +149,35 @@ function learnPhones() {
 let found = [];            // [{ name, addr }]
 let pairScreens = [];      // pairing dialogs open on phones: [{ name, addr }]
 let discTimer = null, discBusy = false;
+// ---- Which nearby phones are "ours" (asked of the MDM; quietly skipped if the server is older) ----
+const classCache = new Map();          // serial -> { c: {class,…}, t }
+let classOffUntil = 0;
+let onlyOurs = store.get('onlyOurs', '0') === '1';
+const serialFromName = (s) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(s.name || ''); return m ? m[1] : ''; };
+const clsOf = (svc) => (classCache.get(serialFromName(svc)) || {}).c || null;
+const isOurs = (c) => !!c && ['fleet', 'production', 'family', 'lookalike'].includes(c.class);
+const classKnown = () => classCache.size > 0;
+async function classifyFor(list) {
+  const serials = [...new Set(list.map(serialFromName).filter(Boolean))];
+  const now = Date.now();
+  const need = serials.filter((s) => !classCache.has(s) || now - classCache.get(s).t > 30000);
+  if (!need.length || now < classOffUntil) return;
+  try {
+    const m = await invoke('classify_serials', { serials: need });
+    need.forEach((s) => classCache.set(s, { c: m[s] || { class: 'other' }, t: now }));
+  } catch { classOffUntil = now + 60000; }      // older server / offline: no labels, nothing breaks
+}
+const classChipHTML = (c) => {
+  if (!c) return '';
+  const k = { fleet: ['fleet', CHECK_I + ' In your fleet'], production: ['prod', 'AIO · ' + (c.production || 'production')],
+    family: ['prod', 'Like your ' + (c.family || 'enrolled devices') + (c.device_class ? ' · ' + c.device_class : '')],
+    lookalike: ['look', 'Looks like ours?'], other: ['oth', 'Other phone'] }[c.class];
+  return k ? `<span class="nb-chip ${k[0]}">${k[1]}</span>` : '';
+};
+const CHECK_I = '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+// The class a phone of a known family should get (learned from the enrolled devices of that family).
+const suggestClassFor = (serial) => { const c = ((classCache.get(serial) || {}).c || {}).device_class; return CLASSES.includes(c) ? c : ''; };
+
 async function discover() {
   if (discBusy || !adb.found || $('app').hidden) return;
   discBusy = true;
@@ -156,6 +185,7 @@ async function discover() {
     const svcs = await invoke('wifi_discover');
     found = svcs.filter((x) => x.kind === 'connect');
     pairScreens = svcs.filter((x) => x.kind === 'pairing');
+    await classifyFor([...found, ...pairScreens]);
     renderPairing();
     autoPairPopup();
     renderFound();
@@ -172,19 +202,30 @@ const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
 // One quiet, collapsed row ("Nearby phones (5)") instead of a card per phone.
 function renderFound() {
   const box = $('foundNet');
-  const list = found.filter((f) => !isConnected(f));
+  let list = found.filter((f) => !isConnected(f));
   const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || 'Phone';
-  const sig = list.map((f) => f.addr + nameOf(f)).join('|') + '|' + nearOpen;
+  const known = classKnown();
+  const total = list.length;
+  if (known) {
+    list = [...list].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x)));          // ours first (stable)
+    if (onlyOurs) list = list.filter((f) => isOurs(clsOf(f)));
+  }
+  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const grew = list.length > nearPrev;     // the badge pops only when a new phone shows up
-  nearPrev = list.length;
-  if (!list.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<div class="nb-grp ${nearOpen ? 'open' : ''}">
-    <button class="nb-head" data-grp aria-expanded="${nearOpen}">${ICON.wifi.replace('class="ic"', 'class="ic nb-wifi"')}<span>Nearby phones</span><span class="nb-badge ${grew ? 'new' : ''}">${list.length}</span><span class="nb-chev">${CHEV}</span></button>
-    <div class="nb-list">${list.map((f, i) => `<div class="nb-row" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr)}</span></div><button class="nb-go" data-go>Pair</button></div>`).join('')}</div></div>`;
+  const grew = total > nearPrev;     // the badge pops only when a new phone shows up
+  nearPrev = total;
+  if (!total) { box.innerHTML = ''; return; }
+  const sw = known && nearOpen ? `<label class="nb-sw ${onlyOurs ? 'on' : ''}" data-only title="Hide phones that are not ours">Only ours<i></i></label>` : '';
+  box.innerHTML = `<div class="nb-grp ${nearOpen ? 'open' : ''}"><div class="nb-bar">
+    <button class="nb-head" data-grp aria-expanded="${nearOpen}">${ICON.wifi.replace('class="ic"', 'class="ic nb-wifi"')}<span>Nearby phones</span><span class="nb-badge ${grew ? 'new' : ''}">${known && onlyOurs ? list.length + '/' + total : total}</span><span class="nb-chev">${CHEV}</span></button>${sw}</div>
+    <div class="nb-list">${list.length ? list.map((f, i) => {
+      const c = clsOf(f), sn = serialFromName(f);
+      return `<div class="nb-row ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span>${classChipHTML(c)}</div><button class="nb-go" data-go>Pair</button></div>`;
+    }).join('') : '<div class="nb-empty">None of these are ours. Turn off “Only ours” to see them.</div>'}</div></div>`;
 }
 $('foundNet').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-go]')) openPair();
 });
@@ -199,12 +240,13 @@ const pairAutoOpened = new Set();   // already popped up once
 
 function renderPairing() {
   const box = $('pairNet');
-  const sig = pairScreens.map((s) => s.addr + pairName(s)).join('|');
+  const ordered = classKnown() ? [...pairScreens].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x))) : pairScreens;
+  const sig = ordered.map((s) => s.addr + pairName(s) + ((clsOf(s) || {}).class || '')).join('|');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = pairScreens.length ? `<div class="sh"><span class="wave2"></span>Pairing requests</div>` + pairScreens.map((s) => {
+  box.innerHTML = ordered.length ? `<div class="sh"><span class="wave2"></span>Pairing requests</div>` + ordered.map((s) => {
     const sn = serialOfSvc(s);
-    return `<button class="pr-row" data-addr="${esc(s.addr)}"><div class="pr-a"><b>${esc(pairName(s))} · pairing</b><span class="mono">${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span></div><span class="pr-go">Enter code ›</span></button>`;
+    return `<button class="pr-row" data-addr="${esc(s.addr)}"><div class="pr-a"><b>${esc(pairName(s))} · pairing</b><span class="mono">${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span>${classChipHTML(clsOf(s))}</div><span class="pr-go">Enter code ›</span></button>`;
   }).join('') : '';
 }
 $('pairNet').addEventListener('click', (e) => {
@@ -221,6 +263,9 @@ function openPairModal(s) {
   $('pmTitle').textContent = 'Pair with ' + pairName(s);
   $('pmMeta').textContent = s.addr.split(':')[0] + (sn ? ' · ' + sn : '');
   $('pmAsk').textContent = 'Enter the 6-digit code shown on the phone.';
+  const hc = clsOf(s), hint = $('pmHint');
+  hint.hidden = !hc || hc.class === 'other';
+  hint.innerHTML = hc && hc.class !== 'other' ? classChipHTML(hc) : '';
   $('pmCode').value = ''; $('pmCode').disabled = false;
   $('pmMsg').innerHTML = '';
   $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
