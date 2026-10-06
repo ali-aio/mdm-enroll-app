@@ -398,7 +398,7 @@ function renderHero() {
   const r = d && run[d.handle];
   const key = !adb.found ? 'adb|' + (guideOs || adb.os)
     : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', fixOpen ? 'f' : '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : ''].join('|') : 'empty';
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', fixOpen ? 'f' : '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || ''].join('|') : 'empty';
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
   const tok = (heroTok = {});
@@ -460,7 +460,7 @@ function renderHero() {
     const burst = r?.done ? '<div class="ring"></div>' : '';
     hero.innerHTML = `<div class="okbig">${CHECK}</div><h2 style="margin-top:8px">Enrolled</h2>
       <div class="mono" style="color:var(--muted)">${esc(d.name)}</div>
-      ${chipRow(chip('ok', esc(d.class || 'device')), d.agent_version ? chip('', 'agent ' + esc(d.agent_version)) : '')}
+      ${chipRow(chip('ok', esc(d.class || 'device')), d.agent_version ? chip('', 'agent ' + esc(d.agent_version)) : '', d.enrolled_by ? chip('', ICON.user + ' Enrolled by ' + esc(d.enrolled_by), 'Who enrolled this device through the enroll app') : '')}
       <button class="cc-btn primary" id="next" style="margin-top:12px">Next device</button>${burst}`;
     if (r) r.done = false;
     heroKey = [d.handle, d.status, classOf(d.handle), '', '', '', '', fixOpen ? 'f' : ''].join('|');

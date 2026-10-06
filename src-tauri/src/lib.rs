@@ -46,6 +46,8 @@ struct DeviceRow {
     firmware_version: String,
     build: String,
     server_seen: bool,
+    /// Who enrolled it through the enroll app (display name), if the MDM knows.
+    enrolled_by: String,
     server_status: String,
     last_seen: String,
 }
@@ -364,6 +366,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 serial: String::new(), android: String::new(), status: "offline".into(),
                 note: String::new(), class: String::new(), agent_version: String::new(),
                 firmware_version: String::new(), build: String::new(), server_seen: false,
+                enrolled_by: String::new(),
                 server_status: String::new(), last_seen: String::new(),
             };
             match d.state.as_str() {
@@ -439,6 +442,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 r.status = "enrolled".into();
                 r.class = s.class.clone();
                 r.agent_version = s.agent_version.clone();
+                r.enrolled_by = if s.enrolled_by_name.is_empty() { s.enrolled_by.clone() } else { s.enrolled_by_name.clone() };
                 r.note.clear();
             }
         }

@@ -26,6 +26,12 @@ pub struct Status {
     pub agent_version: String,
     #[serde(default)]
     pub last_seen_at: Option<String>,
+    /// Username of the account that enrolled it through the enroll app ("" if unknown).
+    #[serde(default)]
+    pub enrolled_by: String,
+    /// That account's display name ("First Last"), or the username when it has none.
+    #[serde(default)]
+    pub enrolled_by_name: String,
 }
 
 impl Status {
@@ -250,6 +256,10 @@ mod tests {
 
     #[test]
     fn firmware_devices_registered_as_auto_are_known() {
+        let by: Status = serde_json::from_str(r#"{"enrolled":true,"status":"enrolled","enrolled_by":"shahrukh","enrolled_by_name":"Shahrukh Bashir"}"#).unwrap();
+        assert_eq!(by.enrolled_by_name, "Shahrukh Bashir");
+        let old: Status = serde_json::from_str(r#"{"enrolled":true,"status":"enrolled"}"#).unwrap();
+        assert_eq!(old.enrolled_by_name, ""); // an older server sends no such field
         let auto: Status = serde_json::from_str(r#"{"enrolled":false,"status":"auto","class":"t7","last_seen_at":"2026-10-06T10:00:00Z"}"#).unwrap();
         assert!(auto.known() && !auto.enrolled);
         let unseen: Status = serde_json::from_str(r#"{"enrolled":false}"#).unwrap();
