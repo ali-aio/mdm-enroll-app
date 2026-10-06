@@ -90,3 +90,5 @@
 .diag b{display:block;font-size:12px}
 .raw{margin-top:6px;font-size:10.5px;color:var(--muted);word-break:break-word}
 @media(max-width:700px){.wsplit{grid-template-columns:1fr}}
+
+.lnk{color:var(--accent-text);font-weight:700;cursor:pointer;text-decoration:underline;}

@@ -221,10 +221,10 @@ function renderHero() {
   if (wifiMode) {
     hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
     Wifi.draw(hero.querySelector('.wbody'), {
-      invoke, esc, Guide, alive, prefill: wifiPrefill,
+      invoke, esc, Guide, alive, prefill: wifiPrefill, devices: () => devices,
       onConnected: (addr) => {
         const host = String(addr).split(':')[0];
-        if (!savedPhones.some((p) => p.host === host)) { savedPhones.unshift({ host, name: '' }); saveSaved(); }
+        if (String(addr).includes(':') && !savedPhones.some((p) => p.host === host)) { savedPhones.unshift({ host, name: '' }); saveSaved(); }
         setTimeout(() => { wifiMode = false; selected = addr; heroKey = ''; tick(); }, 1600);
       },
     });
