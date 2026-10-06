@@ -72,6 +72,12 @@ pub struct MdnsService {
     pub addr: String,
 }
 
+/// Connected over the network rather than USB: `ip:port`, or the `adb-…._adb-tls-connect._tcp`
+/// name adb gives a phone it found through Wireless debugging.
+pub fn is_network_handle(h: &str) -> bool {
+    h.contains(':') || h.contains("._adb-tls-")
+}
+
 /// `host:port` where host is an IPv4 address or a plain hostname. Anything adb would
 /// treat as a flag, or a shell would, is rejected.
 pub fn valid_hostport(a: &str) -> bool {
@@ -119,10 +125,19 @@ impl Adb {
         if !valid_handle(handle) {
             return Err("invalid device handle".into());
         }
-        if !handle.contains(':') {
+        if !is_network_handle(handle) {
             return Err("This phone is on a USB cable. Unplug it to remove it from the list.".into());
         }
-        self.run(&["disconnect", handle])?;
+        let out = self.run(&["disconnect", handle]).unwrap_or_else(|e| e);
+        // Phones found through Wireless debugging reconnect by themselves while it is on.
+        if handle.contains("._adb-tls-") {
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            if self.devices().map(|d| d.iter().any(|x| x.handle == handle && x.state == "device")).unwrap_or(false) {
+                return Err("It reconnects by itself because Wireless debugging is still on. Turn Wireless debugging off on the phone to forget it.".into());
+            }
+        } else if out.to_lowercase().contains("no such device") {
+            return Err(format!("adb could not disconnect it: {}", out.trim()));
+        }
         Ok("Disconnected.".into())
     }
 
@@ -435,6 +450,13 @@ mod tests {
         assert!(!package_listed("", FIRMWARE_PKG));
         assert_eq!(parse_version_name("  versionCode=161 minSdk=30\n  versionName=1.6.2\n"), "1.6.2");
         assert_eq!(parse_version_name("nothing"), "");
+    }
+
+    #[test]
+    fn network_handles() {
+        assert!(is_network_handle("192.168.1.5:5555"));
+        assert!(is_network_handle("adb-DK19248T41010-FoT4PR._adb-tls-connect._tcp"));
+        assert!(!is_network_handle("18121FDF60022T"));
     }
 
     #[test]

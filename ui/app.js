@@ -13,6 +13,8 @@ const ICON = {
   kds: svg('<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M7 9h5M7 12.5h8M9 21h6"/>'),
   kiosk: svg('<rect x="6" y="2.5" width="12" height="16" rx="2"/><path d="M9 21.5h6M12 18.5v3"/>'),
   tablet: svg('<rect x="3" y="4" width="18" height="16" rx="2.2"/><path d="M10.5 17h3"/>'),
+  usb: svg('<path d="M12 3v14M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 9l4-2v3M12 12l-4-2V7"/>'),
+  wifi: svg('<path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>'),
 };
 const PHONE = ICON.phone;
@@ -66,7 +68,7 @@ let savedPhones = [];
 try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
 const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));              // cancels the phone animation when the hero is redrawn
 
-const isNet = (d) => d.handle.includes(':');
+const isNet = (d) => d.handle.includes(':') || d.handle.includes('._adb-tls-');
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
@@ -119,10 +121,10 @@ function renderRail() {
     // Enrolled, or firmware the MDM has registered: a tick instead of the status dot.
     const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
     // Only redraw when something visible changed, so the tick animates once, not on every poll.
-    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length].join('|');
+    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, isNet(d)].join('|');
     if (el.dataset.sig !== sig) {
       el.dataset.sig = sig;
-      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span>${
+      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="${isNet(d) ? 'Connected over Wi-Fi' : 'Connected by USB cable'}">${isNet(d) ? ICON.wifi : ICON.usb}</span>${
         ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}`;
     }
     if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
@@ -192,7 +194,7 @@ function renderHero() {
     return;
   }
   const head = `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
-    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}${d.android ? ' · Android ' + esc(d.android) : ''}</div>`;
+    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}${d.android ? ' · Android ' + esc(d.android) : ''} · ${isNet(d) ? 'Wi-Fi' : 'USB'}</div>`;
 
   if (d.status === 'enrolling') {
     hero.innerHTML = `<div class="bigph">${iconOf(d)}</div><h2>Enrolling ${esc(d.name)}…</h2><div data-tl="${esc(d.handle)}">${timeline(r?.step ?? 0)}</div>`;
@@ -230,6 +232,10 @@ function renderHero() {
       ${isNet(d) ? '<div class="acts"><button class="cc-btn sm" data-forget>Forget this device</button></div><div class="amsg"></div>' : ''}`;
   } else {
     hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">${esc(d.note || d.status)}</p>`;
+  }
+  // Any phone connected over the network can be forgotten, whatever its state.
+  if (isNet(d) && d.status !== 'enrolling' && !hero.querySelector('[data-forget]')) {
+    hero.insertAdjacentHTML('beforeend', '<div class="acts"><button class="cc-btn sm" data-forget title="Disconnects it from this computer. Its MDM enrollment is not affected.">Forget this device</button></div><div class="amsg" style="font-size:11px;color:var(--muted)">Only disconnects it from this computer. It stays enrolled in the MDM.</div>');
   }
 }
 
