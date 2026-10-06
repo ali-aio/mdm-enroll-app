@@ -66,7 +66,12 @@ let heroTok = {};
 let wifiMode = false, wifiPrefill = '';
 let savedPhones = [];
 try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
-const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));              // cancels the phone animation when the hero is redrawn
+const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));
+// Phones the user explicitly forgot: not auto-saved again until they connect to one on purpose.
+let ignoredHosts = [];
+try { ignoredHosts = JSON.parse(store.get('ignored', '[]')); } catch {}
+const saveIgnored = () => store.set('ignored', JSON.stringify(ignoredHosts.slice(-30)));
+const unignore = (host) => { if (ignoredHosts.includes(host)) { ignoredHosts = ignoredHosts.filter((h) => h !== host); saveIgnored(); } };              // cancels the phone animation when the hero is redrawn
 
 const isNet = (d) => d.handle.includes(':') || d.handle.includes('._adb-tls-');
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
@@ -80,6 +85,7 @@ function learnPhones() {
   devices.forEach((d) => {
     if (!d.handle.includes(':') || d.status === 'unauthorized' || d.status === 'offline') return;
     const host = d.handle.split(':')[0];
+    if (ignoredHosts.includes(host)) return;
     let p = savedPhones.find((x) => x.host === host);
     if (!p) { p = { host }; savedPhones.unshift(p); changed = true; }
     const info = { name: d.name || '', serial: d.serial || '', android: d.android || '', firmware: d.status === 'firmware' };
@@ -125,6 +131,7 @@ $('foundNet').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-go]');
   if (!btn) return;
   const row = btn.closest('.nb-row'), addr = row.dataset.addr;
+  unignore(addr.split(':')[0]);
   btn.disabled = true; btn.style.opacity = 1; btn.innerHTML = '<span class="spin"></span>';
   try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; await tick(); discover(); }
   catch (err) {
@@ -152,9 +159,15 @@ $('saved').addEventListener('click', async (e) => {
   const row = e.target.closest('.sv');
   if (!row) return;
   const host = row.dataset.host;
-  if (e.target.closest('[data-rm]')) { savedPhones = savedPhones.filter((p) => p.host !== host); saveSaved(); $('saved').dataset.sig = ''; return renderSaved(); }
+  if (e.target.closest('[data-rm]')) {
+    savedPhones = savedPhones.filter((p) => p.host !== host); saveSaved();
+    if (!ignoredHosts.includes(host)) { ignoredHosts.push(host); saveIgnored(); }
+    delete $('saved').dataset.sig;      // an empty list has the same signature as before; force the redraw
+    return renderSaved();
+  }
   const btn = e.target.closest('[data-re]');
   if (!btn) return;
+  unignore(host);
   btn.innerHTML = '<span class="spin"></span>';
   // Ports change, so look up the phone's current one before trying.
   let addr = '';
@@ -234,6 +247,7 @@ function renderHero() {
       invoke, esc, Guide, alive, prefill: wifiPrefill, devices: () => devices,
       onConnected: (addr) => {
         const host = String(addr).split(':')[0];
+        unignore(host);
         if (String(addr).includes(':') && !savedPhones.some((p) => p.host === host)) { savedPhones.unshift({ host, name: '' }); saveSaved(); }
         setTimeout(() => { wifiMode = false; selected = addr; heroKey = ''; tick(); }, 1600);
       },
