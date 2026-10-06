@@ -290,6 +290,9 @@ impl Adb {
         let host = host_of(addr).to_string();
         let deadline = Instant::now() + Duration::from_secs(18);
         let mut tried: Vec<String> = Vec::new();
+        let mut notes: Vec<String> = Vec::new();         // what was checked, for the error message
+        let mut others: std::collections::BTreeSet<String> = Default::default();
+        let mut saw_phone = false;
         while Instant::now() < deadline {
             // 1. It connected by itself.
             if let Ok(devs) = self.devices() {
@@ -299,28 +302,50 @@ impl Adb {
             }
             // 2. Connect to the address the phone advertises for itself (its port changes, so look it up now).
             for svc in self.mdns_services() {
-                if svc.kind == "connect" && host_of(&svc.addr) == host && !tried.contains(&svc.addr) {
+                if svc.kind != "connect" {
+                    continue;
+                }
+                if host_of(&svc.addr) != host {
+                    others.insert(host_of(&svc.addr).to_string());
+                    continue;
+                }
+                saw_phone = true;
+                if !tried.contains(&svc.addr) {
                     tried.push(svc.addr.clone());
-                    if self.connect(&svc.addr).is_ok() {
-                        return Ok(svc.addr);
+                    match self.connect_try(&svc.addr) {
+                        Ok(()) => return Ok(svc.addr),
+                        Err(why) => notes.push(format!("adb connect {} said: {}", svc.addr, if why.is_empty() { "(nothing)".into() } else { why })),
                     }
                 }
             }
             std::thread::sleep(Duration::from_millis(1000));
         }
+        notes.insert(0, if saw_phone {
+            format!("{host} announced a connect address")
+        } else if others.is_empty() {
+            format!("no phone on this network announced a connect address (is discovery blocked on this Wi-Fi?)")
+        } else {
+            format!("{host} announced nothing, though {} other phone(s) did", others.len())
+        });
         // 3. Last resort: the phone is not announcing its connect address. Find the port its adb is
         //    listening on by asking the phone itself, and send `adb connect` to each open one.
         let paired_port = addr.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok());
-        for port in open_ports(&host, 30000, 65535, Duration::from_millis(400), Duration::from_secs(12)) {
-            if Some(port) == paired_port {
-                continue;
-            }
+        let open: Vec<u16> = open_ports(&host, 30000, 65535, Duration::from_millis(400), Duration::from_secs(12))
+            .into_iter().filter(|p| Some(*p) != paired_port).collect();
+        if open.is_empty() {
+            notes.push(format!("no open ports found on {host} (the phone may not be reachable from this computer)"));
+        }
+        for port in open {
             let cand = format!("{host}:{port}");
-            if self.connect_once(&cand) {
-                return Ok(cand);
+            match self.connect_try(&cand) {
+                Ok(()) => return Ok(cand),
+                Err(why) => notes.push(format!("port {port} open, adb connect said: {}", if why.is_empty() { "(nothing)".into() } else { why })),
             }
         }
-        Err("Paired, but it didn't connect. Make sure the phone and this computer are on the same Wi-Fi, keep the phone awake, then enter the address from its Wireless debugging screen below.".into())
+        Err(format!(
+            "Paired, but it didn't connect. Make sure the phone and this computer are on the same Wi-Fi, keep the phone awake, then enter the address from its Wireless debugging screen below.\nDetails: {}",
+            notes.join(" · ")
+        ))
     }
 
     /// Restarts the adb helper: clears stuck or half-open connections.
@@ -344,6 +369,15 @@ impl Adb {
         } else {
             Err(format!("Pairing failed. Check the code is current (it changes if you close the dialog) and use the pairing port from that dialog, not the connect port. adb said: {}", out.trim()))
         }
+    }
+
+    /// One `adb connect`, no retries; Ok if it connected, otherwise adb's own answer.
+    pub fn connect_try(&self, addr: &str) -> Result<(), String> {
+        if !valid_hostport(addr) {
+            return Err("not a valid address".into());
+        }
+        let out = self.run(&["connect", addr]).unwrap_or_else(|e| e);
+        if connect_ok(&out) { Ok(()) } else { Err(out.trim().to_string()) }
     }
 
     /// One `adb connect` attempt, no retries: for trying several candidate addresses quickly.

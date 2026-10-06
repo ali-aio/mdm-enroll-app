@@ -289,3 +289,5 @@ form.working input{opacity:.6;pointer-events:none;}
 .pm-conn input{font:inherit;font-family:var(--font-mono,monospace);font-size:15px;padding:9px 12px;border-radius:12px;border:2px solid var(--border);background:var(--surface);color:var(--text);}
 .pm-conn input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);}
 .pm-conn .cc-btn{min-height:42px;border-radius:12px;font-size:13.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;}
+
+.wdet{margin-top:6px;font-size:10.5px;opacity:.85;line-height:1.45;overflow-wrap:anywhere;user-select:text;}

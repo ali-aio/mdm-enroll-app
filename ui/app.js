@@ -304,7 +304,8 @@ $('pmGo').addEventListener('click', async () => {
   } catch (err) {
     clearTimeout(t);
     pairBusy = false; $('pmGo').textContent = 'Pair';
-    $('pmMsg').innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
+    const [main, details] = String(err).split('\nDetails: ');
+    $('pmMsg').innerHTML = `<div class="wmsg bad">${esc(main)}${details ? `<div class="wdet mono">${esc(details)}</div>` : ''}</div>`;
     if (String(err).startsWith('Paired, but')) {
       // The code is spent and the phone IS paired; all that is left is `adb connect` to its own address.
       $('pmGo').hidden = true; $('pmCode').disabled = true;
