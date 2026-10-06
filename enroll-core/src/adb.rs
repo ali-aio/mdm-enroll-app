@@ -87,6 +87,35 @@ impl Adb {
         parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default())
     }
 
+    /// Forgets a device that is connected over the network (`adb disconnect`).
+    /// A USB device cannot be forgotten from software: unplug it.
+    pub fn disconnect_device(&self, handle: &str) -> Result<String, String> {
+        if !valid_handle(handle) {
+            return Err("invalid device handle".into());
+        }
+        if !handle.contains(':') {
+            return Err("This phone is on a USB cable. Unplug it to remove it from the list.".into());
+        }
+        self.run(&["disconnect", handle])?;
+        Ok("Disconnected.".into())
+    }
+
+    /// Makes the phone ask "Allow USB debugging?" again: drops the connection and
+    /// reconnects, which re-triggers the authorization prompt when the key is not trusted.
+    pub fn reprompt(&self, handle: &str) -> Result<String, String> {
+        if !valid_handle(handle) {
+            return Err("invalid device handle".into());
+        }
+        if valid_hostport(handle) {
+            let _ = self.run(&["disconnect", handle]);
+            self.connect(handle)?;
+        } else {
+            // USB, or a wireless-debugging mDNS name: kick the connection from our side.
+            self.run_on(handle, &["reconnect"])?;
+        }
+        Ok("Asked the phone again. Look at its screen and tap Allow.".into())
+    }
+
     /// Restarts the adb helper: clears stuck or half-open connections.
     pub fn reset(&self) {
         let _ = self.run(&["kill-server"]);
@@ -348,6 +377,14 @@ mod tests {
         assert_eq!(v[0].kind, "connect");
         assert_eq!(v[1].kind, "pairing");
         assert_eq!(v[1].addr, "192.168.1.20:37215");
+    }
+
+    #[test]
+    fn forget_refuses_usb_and_bad_handles_without_running_adb() {
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb") };
+        assert!(a.disconnect_device("A1B2C3").unwrap_err().contains("USB"));
+        assert!(a.disconnect_device("x; reboot").is_err());
+        assert!(a.reprompt("x; reboot").is_err());
     }
 
     #[test]

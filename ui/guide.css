@@ -11,7 +11,7 @@
 .tog{width:26px;height:14px;border-radius:8px;background:var(--border);position:relative;transition:background .3s;}
 .tog::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#fff;transition:transform .3s;}
 .tog.on{background:var(--ok);}.tog.on::after{transform:translateX(12px);}
-.toast{position:absolute;left:10px;right:10px;bottom:12px;background:#1b1d24;color:#fff;border-radius:10px;padding:7px 9px;font-size:10px;text-align:center;animation:slidein .3s both;}
+.ptoast{position:absolute;left:10px;right:10px;bottom:12px;background:#1b1d24;color:#fff;border-radius:10px;padding:7px 9px;font-size:10px;text-align:center;animation:slidein .3s both;}
 .dlg{margin-top:26px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px;box-shadow:0 8px 22px rgba(20,22,40,.25);animation:pop .4s both;}
 .dlg b{display:block;font-size:11px;margin-bottom:4px}.dlg p{margin:0 0 8px;color:var(--muted);font-size:9.5px;line-height:1.4}
 .dlg .btns{display:flex;justify-content:flex-end;gap:8px;font-weight:700;font-size:10.5px}

@@ -78,7 +78,7 @@ const Guide = (() => {
         n.textContent = i < 7 ? `${i}/7` : '✓';
         await sleep(380);
       }
-      if (alive()) s.insertAdjacentHTML('beforeend', '<div class="toast">You are now a developer!</div>');
+      if (alive()) s.insertAdjacentHTML('beforeend', '<div class="ptoast">You are now a developer!</div>');
     } else if (scene === 'wifi') {
       s.innerHTML = '<h6>Wi-Fi</h6><div class="li hl">Office-Wifi <span>✓</span></div><div class="li">Guest <span></span></div><div class="li">Home <span></span></div>';
     } else if (scene === 'wd') {

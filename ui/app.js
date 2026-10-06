@@ -65,6 +65,7 @@ let savedPhones = [];
 try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
 const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));              // cancels the phone animation when the hero is redrawn
 
+const isNet = (d) => d.handle.includes(':');
 const classOf = (h) => picked[h] || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || ICON.phone);
 const dotOf = (d) => ({ ready: '', enrolled: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
@@ -196,20 +197,25 @@ function renderHero() {
   } else if (d.status === 'blocked') {
     hero.innerHTML = `${head}<div class="fix">${esc(d.note)}<br>Then plug it in again.</div>`;
   } else if (d.status === 'unauthorized') {
-    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">Look at the device screen and tap <b>Allow</b> on the USB debugging prompt.</p><div class="ph-slot" style="margin-top:8px"></div>`;
+    hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">Look at the device screen and tap <b>Allow</b> on the USB debugging prompt.</p>
+      <div class="acts"><button class="cc-btn primary" data-reprompt>Show the popup again</button>${isNet(d) ? '<button class="cc-btn" data-forget>Forget this device</button>' : ''}</div><div class="amsg"></div>
+      <div class="ph-slot" style="margin-top:8px"></div>`;
     Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
   } else if (d.status === 'ready') {
     const cls = classOf(d.handle);
     const err = r?.error ? `<div class="fix shake">${esc(r.error)}</div>` : '';
     hero.innerHTML = `${head}<div class="q">What is this device used for?</div>
       <div class="chips">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
-      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button>${err}`;
+      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button>${err}
+      ${isNet(d) ? '<div class="acts"><button class="cc-btn sm" data-forget>Forget this device</button></div><div class="amsg"></div>' : ''}`;
   } else {
     hero.innerHTML = `${head}<p class="msg" style="margin-top:10px">${esc(d.note || d.status)}</p>`;
   }
 }
 
 function refresh() { renderRail(); renderHero(); }
+
+const hero_amsg = () => document.querySelector('#hero .amsg');
 
 async function retryAdb(btn) {
   if (btn) btn.innerHTML = '<span class="spin"></span> Checking…';
@@ -223,6 +229,20 @@ $('hero').addEventListener('click', async (e) => {
   if (e.target.closest('[data-openhelp]')) { e.preventDefault(); return openHelp('tr'); }
   const d = devices.find((x) => x.handle === selected);
   if (!d) return;
+  const act = e.target.closest('[data-reprompt],[data-forget]');
+  if (act) {
+    const forget = act.hasAttribute('data-forget'), label = act.textContent, msg = hero_amsg();
+    act.disabled = true; act.innerHTML = '<span class="spin"></span> Working…';
+    try {
+      const m = await invoke(forget ? 'device_forget' : 'device_reprompt', { handle: d.handle });
+      if (msg) msg.innerHTML = `<div class="wmsg ok">${esc(m)}</div>`;
+      if (forget) { selected = null; heroKey = ''; devices = devices.filter((x) => x.handle !== d.handle); refresh(); }
+    } catch (err) {
+      if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
+    }
+    act.disabled = false; act.textContent = label;
+    return tick();
+  }
   const chip = e.target.closest('[data-c]');
   if (chip) {
     picked[d.handle] = chip.dataset.c;

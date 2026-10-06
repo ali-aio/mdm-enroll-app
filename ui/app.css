@@ -101,3 +101,6 @@ footer{position:fixed;left:0;right:0;bottom:0;display:flex;align-items:center;ga
 .hero.wifi{align-items:stretch;justify-content:flex-start;text-align:left;}
 .hero.wifi .wh{font-size:16px;font-weight:700;margin-bottom:2px;}
 .hero.wifi .wsub{font-size:12px;color:var(--muted);margin-bottom:12px;}
+
+.acts{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;}
+.amsg{max-width:380px;}
