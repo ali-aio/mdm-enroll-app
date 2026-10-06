@@ -141,8 +141,8 @@ function renderRail() {
     const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, isNet(d)].join('|');
     if (el.dataset.sig !== sig) {
       el.dataset.sig = sig;
-      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="${isNet(d) ? 'Connected over Wi-Fi' : 'Connected by USB cable'}">${isNet(d) ? ICON.wifi : ICON.usb}</span>${
-        ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}`;
+      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="${isNet(d) ? 'Connected over Wi-Fi' : 'Connected by USB cable'}">${isNet(d) ? ICON.wifi : ICON.usb}</span><span class="stat">${
+        ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
     }
     if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
   });

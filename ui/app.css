@@ -152,3 +152,7 @@ form.working input{opacity:.6;pointer-events:none;}
 .sv .svm{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px;}
 .sv .svm .nm{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .sv .svd{font-size:10.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* right-hand columns of a device row: fixed widths so icons line up down the list */
+.ri .conn{width:16px;height:16px;align-items:center;justify-content:center;}
+.ri .stat{width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex:none;}
