@@ -31,16 +31,18 @@ const store = {
 };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-// Follow the OS light/dark setting (style.css themes via data-theme).
+// Follow the OS light/dark setting, and tell the CSS which OS we are on (the Mac sidebar is translucent).
 const mq = window.matchMedia('(prefers-color-scheme: dark)');
 const applyTheme = () => document.documentElement.setAttribute('data-theme', mq.matches ? 'dark' : 'light');
 applyTheme(); mq.addEventListener('change', applyTheme);
+const UA = navigator.platform || navigator.userAgent || '';
+document.documentElement.dataset.os = /Mac/i.test(UA) ? 'mac' : /Win/i.test(UA) ? 'win' : 'linux';
 
-// Scale the whole UI with the window (the dashboard CSS is in fixed px), and let people
-// nudge it with Ctrl/Cmd + / - / 0. The nudge is remembered.
+// A Mac app does not grow its text with the window; people can still nudge the size with
+// Cmd/Ctrl + / - / 0, and the nudge is remembered.
 let userZoom = parseFloat(store.get('zoom', '1')) || 1;
 function applyZoom() {
-  const auto = Math.min(1.6, Math.max(1, Math.min(window.innerWidth / 820, window.innerHeight / 620)));
+  const auto = 1;
   document.documentElement.style.zoom = String(+(auto * userZoom).toFixed(3));
 }
 window.addEventListener('resize', applyZoom);
@@ -127,6 +129,15 @@ const connIcons = (d) => (d.hasUsb ? ICON.usb : '') + (d.wifiHandle ? ICON.wifi 
 const connLabel = (d) => (d.hasUsb && d.wifiHandle ? 'USB + Wi-Fi' : d.wifiHandle ? 'Wi-Fi' : 'USB');
 const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.handle === h)) || {}).serial) || store.get('class', 'dongle');
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
+const GLYPH = { dongle: '#5e5ce6', pos: '#ff9f0a', kds: '#28b463', kiosk: '#0a84ff', t7: '#f9674e', tablet: '#f9674e', mpos: '#bf5af2', payment: '#30b0c7' };
+const glyphOf = (d) => (d.status === 'blocked' ? '#8e8e93' : GLYPH[d.class] || (d.status === 'firmware' ? '#f9674e' : '#8e8e93'));
+const stateLine = (d) => ({
+  ready: 'Ready to enrol', enrolling: 'Enrolling…', enrolled: 'Enrolled' + (d.class ? ' as ' + d.class : ''),
+  firmware: d.server_seen ? 'AIO firmware · registered' : 'AIO firmware', blocked: 'Can’t be enrolled',
+  unauthorized: 'Waiting for Allow on the phone', offline: 'Not responding',
+}[d.status] || d.status);
+function setBar(title, sub) { $('tbTitle').textContent = title; $('tbSub').textContent = sub || ''; }
+const CHEVR = (open) => `<svg class="ic disc ${open ? 'open' : ''}" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>`;
 const dotOf = (d) => ({ ready: '', enrolled: '', firmware: '', enrolling: 'wait', blocked: 'bad', unauthorized: 'wait', offline: 'none' }[d.status] ?? 'none');
 
 // Wi-Fi phones are remembered with whatever adb told us about them, so a saved entry still
@@ -213,21 +224,19 @@ function renderFound() {
   const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '') + ((clsOf(f) || {}).device_class || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  const grew = total > nearPrev;     // the badge pops only when a new phone shows up
   nearPrev = total;
   if (!total) { box.innerHTML = ''; return; }
-  const sw = known && nearOpen ? `<label class="nb-sw ${onlyOurs ? 'on' : ''}" data-only title="Hide phones that are not ours">Only ours<i></i></label>` : '';
-  box.innerHTML = `<div class="nb-grp ${nearOpen ? 'open' : ''}"><div class="nb-bar">
-    <button class="nb-head" data-grp aria-expanded="${nearOpen}">${ICON.wifi.replace('class="ic"', 'class="ic nb-wifi"')}<span>Nearby phones</span><span class="nb-badge ${grew ? 'new' : ''}">${known && onlyOurs ? list.length + '/' + total : total}</span><span class="nb-chev">${CHEV}</span></button>${sw}</div>
-    <div class="nb-list">${list.length ? list.map((f, i) => {
+  const sw = known && nearOpen ? `<label class="sw ${onlyOurs ? 'on' : ''}" data-only title="Hide phones that are not ours">Only ours<i></i></label>` : '';
+  box.innerHTML = `<div class="sec toggle" data-grp role="button" aria-expanded="${nearOpen}">${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}</div>` +
+    (nearOpen ? (list.length ? list.map((f, i) => {
       const c = clsOf(f), sn = serialFromName(f);
-      return `<div class="nb-row ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span>${classChipHTML(c)}</div><button class="nb-go" data-go>Pair</button></div>`;
-    }).join('') : '<div class="nb-empty">None of these are ours. Turn off “Only ours” to see them.</div>'}</div></div>`;
+      return `<button class="sitem in ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 35}ms" title="Pair this phone"><span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><span class="go" data-go>Pair</span></button>`;
+    }).join('') : '<div class="sec" style="font-weight:400">None of these are ours.</div>') : '');
 }
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
-  if (e.target.closest('[data-go]')) openPair();
+  if (e.target.closest('[data-addr]')) openPair();
 });
 
 
@@ -244,9 +253,9 @@ function renderPairing() {
   const sig = ordered.map((s) => s.addr + pairName(s) + ((clsOf(s) || {}).class || '') + ((clsOf(s) || {}).device_class || '')).join('|');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = ordered.length ? `<div class="sh"><span class="wave2"></span>Pairing requests</div>` + ordered.map((s) => {
+  box.innerHTML = ordered.length ? `<div class="sec"><span class="livedot"></span>Pairing requests</div>` + ordered.map((s) => {
     const sn = serialOfSvc(s);
-    return `<button class="pr-row" data-addr="${esc(s.addr)}"><div class="pr-a"><b>${esc(pairName(s))} · pairing</b><span class="mono">${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span>${classChipHTML(clsOf(s))}</div><span class="pr-go">Enter code ›</span></button>`;
+    return `<button class="sitem pair in" data-addr="${esc(s.addr)}"><span class="glyph" style="--g:#0a84ff">${ICON.phone}</span><span class="two"><b>${esc(pairName(s))}</b><small>${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(clsOf(s))}</span><span class="go">Enter code</span></button>`;
   }).join('') : '';
 }
 $('pairNet').addEventListener('click', (e) => {
@@ -359,9 +368,9 @@ function renderSaved() {
   const sig = list.map((p) => [p.host, p.name, p.serial, p.android, p.firmware].join('~')).join('|');
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = list.length ? `<div class="sh">Saved phones</div>` + list.map((p) => {
-    const where = [p.host, p.android ? 'Android ' + p.android : ''].filter(Boolean).join(' · ');
-    return `<div class="sv" data-host="${esc(p.host)}"><div class="svm"><span class="nm">${esc(p.name || 'Unknown phone')}</span>${p.serial ? `<span class="svd mono" title="Serial number">S/N ${esc(p.serial)}</span>` : ''}<span class="svd mono">${esc(where)}${p.name ? '' : ' · not authorized yet'}</span></div><button class="cc-btn sm" data-re>Pair again</button><button class="x" data-rm title="Forget" aria-label="Forget">×</button></div>`;
+  box.innerHTML = list.length ? `<div class="sec">Saved</div>` + list.map((p) => {
+    const tip = [p.name || 'Unknown phone', p.serial ? 'S/N ' + p.serial : '', p.host, p.android ? 'Android ' + p.android : '', p.name ? '' : 'not authorized yet'].filter(Boolean).join(' · ');
+    return `<div class="sitem sv" data-host="${esc(p.host)}" title="${esc(tip)}"><span class="glyph" style="--g:#aeaeb2">${ICON.phone}</span><span class="two"><b>${esc(p.name || 'Unknown phone')}</b><small>${esc(p.serial || p.host)}</small></span><span class="go" data-re>Pair again</span><span class="x" data-rm title="Forget" aria-label="Forget">${ICON.x}</span></div>`;
   }).join('') : '';
 }
 $('saved').addEventListener('click', async (e) => {
@@ -383,54 +392,88 @@ function renderRail() {
   renderFound();
   renderSaved();
   const rail = $('rail');
-  const have = new Map([...rail.children].map((el) => [el.dataset.h, el]));
+  let selEl = rail.querySelector('.rsel');
+  if (!selEl) { selEl = document.createElement('div'); selEl.className = 'rsel'; rail.prepend(selEl); }
+  const have = new Map([...rail.querySelectorAll('.sitem[data-h]')].map((el) => [el.dataset.h, el]));
   devices.forEach((d, i) => {
     let el = have.get(d.handle);
     if (!el) {
       el = document.createElement('button');
-      el.className = 'ri in';
+      el.className = 'sitem in';
       el.dataset.h = d.handle;
       el.addEventListener('click', () => { selected = d.handle; wifiMode = false; refresh(); });
     }
     have.delete(d.handle);
     el.classList.toggle('on', d.handle === selected && !wifiMode);
-    // Enrolled, or firmware the MDM has registered: a tick instead of the status dot.
+    // Enrolled, or firmware the MDM has registered: a green tick instead of the status dot.
     const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
     // Only redraw when something visible changed, so the tick animates once, not on every poll.
-    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d)].join('|');
+    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d), glyphOf(d)].join('|');
     if (el.dataset.sig !== sig) {
       el.dataset.sig = sig;
-      el.innerHTML = `<div class="ph">${iconOf(d)}</div><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn" title="Connected: ${connLabel(d)}">${connIcons(d)}</span><span class="stat">${
-        ticked ? `<span class="tick" title="Enrolled">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
+      el.title = `${d.name || 'Unknown device'} · ${stateLine(d)} · ${connLabel(d)}`;
+      el.innerHTML = `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn">${connIcons(d)}</span><span class="stat">${
+        ticked ? `<span class="tick">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
     }
-    if (rail.children[i] !== el) rail.insertBefore(el, rail.children[i] || null);
+    const want = rail.children[i + 1];      // +1: the selection highlight is the first child
+    if (want !== el) rail.insertBefore(el, want || null);
   });
   have.forEach((el) => el.remove());
+  let none = rail.querySelector('.none');
+  if (!devices.length && !none) { none = document.createElement('div'); none.className = 'none'; none.textContent = 'None connected'; rail.appendChild(none); }
+  else if (devices.length && none) none.remove();
+  // The selection glides to the selected row instead of jumping.
+  const on = rail.querySelector('.sitem.on');
+  if (on) { selEl.style.transform = `translateY(${on.offsetTop}px)`; selEl.style.height = on.offsetHeight + 'px'; selEl.style.opacity = 1; }
+  else selEl.style.opacity = 0;
 }
 
-function timeline(step) {
-  return `<ul class="tl">${STEPS.map((s, i) => `<li class="${i < step ? 'ok' : i === step ? 'on' : ''}">${s}</li>`).join('')}</ul>`;
-}
+const stepRow = (s, i, step) => `<div class="row steprow ${i < step ? 'done' : i === step ? 'now' : 'todo'}" data-i="${i}"><span class="k">${s}</span><span class="state">${i < step ? CHECK : i === step ? '<span class="spin"></span>' : ''}</span></div>`;
 
 function setStep(handle, step) {
-  const ul = document.querySelector(`#hero [data-tl="${CSS.escape(handle)}"] .tl`) || document.querySelector('#hero .tl');
-  if (!ul) return;
-  [...ul.children].forEach((li, i) => { li.className = i < step ? 'ok' : i === step ? 'on' : ''; });
+  const rows = [...document.querySelectorAll('#hero .steprow')];
+  rows.forEach((r, i) => {
+    const want = i < step ? 'done' : i === step ? 'now' : 'todo';
+    if (r.classList.contains(want)) return;                      // only touch rows that changed
+    r.classList.remove('done', 'now', 'todo'); r.classList.add(want);
+    r.querySelector('.state').innerHTML = want === 'done' ? CHECK : want === 'now' ? '<span class="spin"></span>' : '';
+  });
+  $('pbar').style.opacity = 1;
+  $('pbar').style.width = Math.min(100, (step / STEPS.length) * 100) + '%';
 }
+function finishBar() {
+  const pb = $('pbar'); pb.style.width = '100%';
+  setTimeout(() => { pb.style.opacity = 0; setTimeout(() => { pb.style.width = '0'; }, 450); }, 450);
+}
+// The segmented control's thumb slides under the chosen class.
+function placeThumb(animate) {
+  const seg = $('seg'); if (!seg) return;
+  const on = seg.querySelector('button.on'), th = seg.querySelector('.th');
+  if (!on || !th) return;
+  if (!animate) th.style.transition = 'none';
+  th.style.left = on.offsetLeft + 'px'; th.style.width = on.offsetWidth + 'px';
+  if (!animate) { void th.offsetWidth; th.style.transition = ''; }
+}
+function restartFade(el) { el.classList.remove('fade'); void el.offsetWidth; el.classList.add('fade'); }
+const heroKeyFor = (d) => {
+  const r = d && run[d.handle];
+  return !adb.found ? 'adb|' + (guideOs || adb.os)
+    : wifiMode ? 'wifi'
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name, d.firmware_version || '', d.agent_version || ''].join('|') : 'empty';
+};
 
 function renderHero() {
   const hero = $('hero');
   const d = devices.find((x) => x.handle === selected);
   const r = d && run[d.handle];
-  const key = !adb.found ? 'adb|' + (guideOs || adb.os)
-    : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', fixOpen ? 'f' : '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || ''].join('|') : 'empty';
+  const key = heroKeyFor(d);
   if (key === heroKey) return;          // nothing visible changed: don't restart animations
   heroKey = key;
   const tok = (heroTok = {});
   const alive = () => heroTok === tok;
 
   if (!adb.found) {
+    setBar('AIO Enroll', 'adb was not found');
     hero.classList.remove('wifi');
     const os = guideOs || adb.os;
     hero.innerHTML = Guide.adbCard(os, adb.os);
@@ -440,6 +483,7 @@ function renderHero() {
   }
   hero.classList.toggle('wifi', wifiMode);
   if (wifiMode) {
+    setBar('Add over Wi-Fi', 'Pair a phone with its 6-digit code');
     hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
     Wifi.draw(hero.querySelector('.wbody'), {
       invoke, esc, Guide, alive, devices: () => devices,
@@ -455,6 +499,7 @@ function renderHero() {
     return;
   }
   if (!d) {
+    setBar('AIO Enroll', 'No devices connected');
     hero.innerHTML = `<div class="split"><div class="chk">
       <div class="ct">Let’s connect your first device</div>
       <div class="cs2">Three quick things. The first ticks itself.</div>
@@ -471,60 +516,74 @@ function renderHero() {
     tipShown = false;
     return;
   }
-  // ---- the device panel: chips for facts, one short line for a problem, "?" for the how-to,
-  // ---- icon buttons (with tooltips) for the occasional actions.
-  if (fixFor !== d.handle) { fixOpen = false; fixFor = d.handle; }
-  const chip = (cls, html, tip = '') => `<span class="pchip ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
-  const connChip = chip(d.hasUsb && d.wifiHandle ? 'ok' : '', connIcons(d) + ' ' + connLabel(d));
-  const chipRow = (...extra) => `<div class="pchips">${d.android ? chip('', 'Android ' + esc(d.android)) : ''}${connChip}${extra.join('')}</div>`;
-  const head = (...extra) => `<div class="bigph">${iconOf(d)}</div><h2>${esc(d.name || 'Unknown device')}</h2>
-    <div class="mono" style="color:var(--muted)">${esc(d.serial || d.handle)}</div>${chipRow(...extra)}`;
+  // ---- the device pane, System Settings style: a header, then grouped label/value rows.
+  const sub = stateLine(d);
+  setBar(d.name || 'Unknown device', sub);
+  const row = (k, v, extra = '', cls = '') => `<div class="row ${cls}"><span class="k">${k}</span>${v !== '' ? `<span class="v">${v}</span>` : ''}${extra}</div>`;
+  const group = (title, rows, foot = '') => `<div class="ghead">${title}</div><div class="group">${rows.filter(Boolean).join('')}</div>${foot ? `<div class="gfoot">${foot}</div>` : ''}`;
+  const pill = (cls, html, tip = '') => `<span class="pill ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
+  const justDone = d.status === 'enrolled' && r?.done;
+  const hdr = `<div class="dhdr"><div class="dicon ${justDone ? 'done' : ''}" style="--g:${glyphOf(d)}">${justDone ? CHECK : iconOf(d)}</div><div><h1>${esc(d.name || 'Unknown device')}</h1><p>${esc(sub)}${d.android ? ' · Android ' + esc(d.android) : ''}</p></div></div>`;
+  const deviceG = group('Device', [row('Model', esc(d.name || '—')), row('Serial number', `<span class="mono">${esc(d.serial || d.handle)}</span>`), d.android ? row('Android', esc(d.android)) : '']);
+  const wifiAddr = d.wifiHandle ? (d.wifiHandle.includes(':') ? d.wifiHandle : 'Wireless debugging') : '';
+  const canSwitch = !isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status);
+  const connG = group('Connection', [
+    d.hasUsb ? row(ICON.usb + 'USB cable', '', pill('ok', 'Connected')) : '',
+    d.wifiHandle ? row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(wifiAddr)}</span>`, `<button class="lnk danger" data-forget ${d.hasUsb ? `data-h="${esc(d.wifiHandle)}"` : ''} title="${d.hasUsb ? 'Disconnects the Wi-Fi link only; the cable stays connected' : 'Disconnects it from this computer; it stays enrolled in the MDM'}">Forget</button>`)
+      : canSwitch ? row(ICON.wifi + 'Wi-Fi', 'Not connected', `<button class="lnk" data-towifi title="No pairing needed: reads the phone’s address over the cable and connects to it">Switch to Wi-Fi</button>`) : '',
+  ], d.hasUsb && d.wifiHandle ? 'It’s safe to unplug the cable — the phone stays connected over Wi-Fi.' : '');
 
-  if (d.status === 'enrolling') {
-    hero.innerHTML = `<div class="bigph">${iconOf(d)}</div><h2>Enrolling ${esc(d.name)}…</h2><div data-tl="${esc(d.handle)}">${timeline(r?.step ?? 0)}</div>`;
+  let enrolG = '', extra = '', acts = '';
+  if (d.status === 'ready') {
+    const cls = classOf(d.handle);
+    enrolG = group('Enrollment', [
+      row('Status', '', pill('warn', 'Not enrolled')),
+      row('Used as', '', `<div class="seg" id="seg"><span class="th"></span>${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>`),
+      row('Enrolled by', esc($('whoName').textContent || 'You')),
+    ], 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
+    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go">${r?.error ? 'Try Again' : 'Enrol'}</button></div>`;
+  } else if (d.status === 'enrolling') {
+    enrolG = group('Enrolling', STEPS.map((s, i) => stepRow(s, i, r?.step ?? 0)));
   } else if (d.status === 'enrolled') {
-    const burst = r?.done ? '<div class="ring"></div>' : '';
-    hero.innerHTML = `<div class="okbig">${CHECK}</div><h2 style="margin-top:8px">Enrolled</h2>
-      <div class="mono" style="color:var(--muted)">${esc(d.name)}</div>
-      ${chipRow(chip('ok', esc(d.class || 'device')), d.agent_version ? chip('', 'agent ' + esc(d.agent_version)) : '', d.enrolled_by ? chip('', ICON.user + ' Enrolled by ' + esc(d.enrolled_by), 'Who enrolled this device through the enroll app') : '')}
-      <button class="cc-btn primary" id="next" style="margin-top:12px">Next device</button>${burst}`;
+    enrolG = group('Enrollment', [
+      row('Status', '', pill('ok' + (justDone ? ' pop' : ''), ICON.check + ' Enrolled')),
+      row('Used as', esc(d.class || '—')),
+      d.agent_version ? row('Agent', esc(d.agent_version)) : '',
+      d.enrolled_by ? row('Enrolled by', esc(d.enrolled_by)) : '',
+    ]);
+    const nxt = devices.find((x) => x.status === 'ready' && x.handle !== d.handle);
+    acts = nxt ? `<div class="dacts"><button class="cc-btn primary lg" id="next">Next: ${esc(nxt.name || 'device')}</button></div>` : '';
+    if (justDone) finishBar();
     if (r) r.done = false;
-    heroKey = [d.handle, d.status, classOf(d.handle), '', '', '', '', fixOpen ? 'f' : ''].join('|');
   } else if (d.status === 'firmware') {
     const gone = d.server_status === 'retired' || d.server_status === 'wiped';
-    const reg = d.server_seen ? chip('ok', ICON.cloud + ' Registered', d.class ? 'Registered in the MDM as ' + d.class : '')
-      : gone ? chip('bad', esc(d.server_status), 'The MDM has this device marked ' + d.server_status + '. Restore it from the dashboard.')
-      : chip('warn', 'Not registered yet', 'It enrolls itself the first time it checks in over the network, so it needs internet.');
-    hero.innerHTML = head(chip('ok', ICON.check + ' AIO firmware', 'MDM client ' + (d.firmware_version || '—') + (d.build ? ' · build ' + d.build : '')), reg);
+    const mdm = d.server_seen ? pill('ok', ICON.check + ' Registered') : gone ? pill('bad', esc(d.server_status)) : pill('warn', 'Not registered yet');
+    const foot = d.server_seen ? 'This device runs AIO firmware and enrolls itself. Nothing to do here.'
+      : gone ? `The MDM has it marked ${esc(d.server_status)}. Restore it from the dashboard if it should be active.`
+      : 'It enrolls itself the first time it checks in over the network, so make sure it has internet.';
+    enrolG = group('Enrollment', [row('Managed by', 'AIO firmware client'), row('Client version', esc(d.firmware_version || '—')),
+      d.build ? row('Build', `<span class="mono">${esc(d.build)}</span>`) : '', row('MDM', '', mdm), d.server_seen && d.class ? row('Used as', esc(d.class)) : ''], foot);
   } else if (d.status === 'blocked') {
     const why = String(d.note || 'Blocked').split(' — ')[0];
     const isAccount = /account/i.test(d.note || '');
-    hero.innerHTML = head(chip('bad', ICON.user + ' ' + esc(why)), chip('bad', ICON.x + ' Can’t be enrolled', 'Android only lets an app become Device Owner on a phone with no accounts. Fix it and plug it in again.')) +
-      `<div class="row"><button class="cc-btn sm" data-fix>How to fix ${ICON.q.replace('class="ic"', 'class="ic" style="width:13px;height:13px;display:inline-block;vertical-align:-2px"')}</button></div>` +
-      (fixOpen ? `<div class="hpop"><b>How to fix</b><ol><li>Factory reset the phone.</li>${isAccount ? '<li>Don’t sign in to Google.</li>' : ''}<li>Plug it in again.</li></ol></div>` : '');
+    enrolG = group('Enrollment', [row('Status', '', pill('bad', 'Can’t be enrolled')), row('Reason', esc(why))],
+      'Android only lets an app become Device Owner on a phone with no accounts.');
+    const steps = ['Factory reset the phone.', ...(isAccount ? ['Don’t sign in to Google during setup.'] : []), 'Turn on USB debugging and plug it in again.'];
+    extra = group('How to fix', steps.map((s, i) => `<div class="row howto"><span class="n">${i + 1}</span><span class="k">${s}</span></div>`));
   } else if (d.status === 'unauthorized') {
-    hero.innerHTML = head(chip('warn', 'Unauthorized')) +
-      `<div class="acts"><button class="cc-btn primary" data-reprompt>Show the popup again</button></div>
-      <div class="ph-slot" style="margin-top:8px"></div>`;
-    Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
-  } else if (d.status === 'ready') {
-    const cls = classOf(d.handle);
-    const err = r?.error ? `<div class="fix shake">${esc(r.error)}</div>` : '';
-    hero.innerHTML = `${head()}<div class="classbox"><div class="chips">${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>
-      <button class="cc-btn primary bigbtn" id="go">${r?.error ? 'Try again' : 'Enroll this device'}</button></div>${err}`;
+    enrolG = group('Connection', [row('Status', '', pill('warn', 'Waiting for Allow'))],
+      'Look at the phone and tap Allow on “Allow USB debugging?”. Tick “Always allow from this computer”.');
+    extra = '<div class="illus"><div class="ph-slot"></div></div>';
+    acts = '<div class="dacts"><button class="cc-btn" data-reprompt>Show the Prompt Again</button></div>';
   } else {
-    hero.innerHTML = head(chip('warn', esc(String(d.note || d.status).split('.')[0])));
+    enrolG = group('Status', [row('Status', '', pill('warn', esc(String(d.note || d.status).split('.')[0])))]);
   }
-
-  // Occasional actions: a quiet strip of labelled buttons (no mystery icons, no tooltips).
-  if (d.status !== 'enrolling' && !hero.querySelector('.towifi')) {
-    const qb = (attrs, icon, label, cls = '', tip = '') => `<button class="qb ${cls}" ${attrs}${tip ? ` title="${esc(tip)}"` : ''}>${icon}${label}</button>`;
-    let parts = '';
-    if (d.hasUsb && d.wifiHandle) parts = `<span class="okline">${ICON.check} OK to unplug the cable</span>` + qb(`data-forget data-h="${esc(d.wifiHandle)}"`, ICON.wifi, 'Forget Wi-Fi link', 'danger', 'Disconnects the Wi-Fi link only. The USB connection stays.');
-    else if (isNet(d)) parts = qb('data-forget', ICON.x, 'Forget device', 'danger', 'Disconnects it from this computer. It stays enrolled in the MDM.');
-    else if (['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status)) parts = qb('data-towifi', ICON.wifi, 'Switch to Wi-Fi', '', 'No pairing needed. Reads the phone\u2019s IP over the cable and connects to it.');
-    hero.insertAdjacentHTML('beforeend', `${parts ? `<div class="tools"><div class="sep"></div><div class="foot">${parts}</div></div>` : ''}<div class="amsg towifi"></div>`);
-  }
+  const showConn = !['enrolling', 'unauthorized'].includes(d.status);
+  hero.innerHTML = `<div class="dwrap">${hdr}${enrolG}${extra}${acts}${acts ? '<div style="height:18px"></div>' : ''}${showConn ? connG : ''}${d.status === 'enrolling' ? '' : deviceG}<div class="amsg towifi"></div></div>`;
+  restartFade(hero);
+  if (d.status === 'unauthorized') Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
+  if (d.status === 'enrolling') setStep(d.handle, r?.step ?? 0);
+  placeThumb(false);
 }
 
 document.addEventListener('click', (e) => {
@@ -599,7 +658,10 @@ $('hero').addEventListener('click', async (e) => {
   if (chip) {
     picked[d.handle] = chip.dataset.c;
     store.set('class', chip.dataset.c);
-    return refresh();
+    chip.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === chip));
+    placeThumb(true);
+    heroKey = heroKeyFor(d);           // the pane already shows it
+    return;
   }
   if (e.target.closest('#next')) {
     const nxt = devices.find((x) => x.status === 'ready' && x.handle !== d.handle);
@@ -619,6 +681,7 @@ $('hero').addEventListener('click', async (e) => {
     showToday();
   } catch (err) {
     run[d.handle] = { error: String(err) };
+    $('pbar').style.width = '0';
   }
   heroKey = '';
   tick();
@@ -630,7 +693,7 @@ listen('enroll-step', (e) => {
   setStep(handle, step);
 });
 
-function showToday() { $('today').textContent = todayCount ? `${todayCount} enrolled today` : ''; }
+function showToday() { $('today').textContent = todayCount ? `${todayCount} today` : ''; }
 try {
   const t = JSON.parse(store.get('today', 'null'));
   if (t && t.day === new Date().toDateString()) todayCount = t.n;
@@ -643,6 +706,7 @@ async function tick() {
   polling = true; pollSince = Date.now();
   try {
     adb = await invoke('adb_status', { retry: false });
+    document.querySelector('.status').classList.toggle('bad', !adb.found);
     if (!adb.found) { if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; } devices = []; selected = null; refresh(); $('foot').textContent = 'adb not found'; return; }
     const next = await invoke('list_devices');
     // A device the UI is mid-enroll on stays "enrolling" even if adb blips.
@@ -740,10 +804,12 @@ let loaded = false;   // first device list received?
 // Shimmer placeholders until the first device list arrives.
 function renderSkeleton() {
   loaded = false;
-  $('rail').innerHTML = Array.from({ length: 3 }, () => '<div class="ri skrow"><div class="ph sk"></div><span class="nm sk"></span></div>').join('');
+  $('rail').innerHTML = Array.from({ length: 3 }, () => '<div class="sitem skrow"><span class="glyph sk" style="--g:transparent"></span><span class="nm"><span class="sk" style="display:block;height:10px;width:70%"></span></span></div>').join('');
   const hero = $('hero');
   hero.className = 'hero loading';
-  hero.innerHTML = '<div class="sk" style="width:84px;height:84px;border-radius:22px"></div><div class="sk" style="width:180px;height:18px"></div><div class="sk" style="width:130px;height:12px"></div><div class="sk" style="width:260px;height:44px;margin-top:10px;border-radius:12px"></div>';
+  hero.innerHTML = '<div class="dwrap"><div class="dhdr"><div class="dicon sk" style="--g:transparent"></div><div style="flex:1"><div class="sk" style="width:200px;height:18px"></div><div class="sk" style="width:130px;height:11px;margin-top:8px"></div></div></div>' +
+    '<div class="sk" style="height:118px;border-radius:10px;margin-bottom:18px"></div><div class="sk" style="height:80px;border-radius:10px"></div></div>';
+  setBar('AIO Enroll', 'Looking for devices…');
   heroKey = 'skeleton';
 }
 
@@ -802,7 +868,9 @@ $('signinForm').addEventListener('submit', async (e) => {
   btn.disabled = false; btn.textContent = label;
   $('signinForm').classList.remove('working');
 });
-$('signOut').addEventListener('click', async () => { await invoke('sign_out'); goSignIn(); });
+$('signOut').addEventListener('click', async () => { $('acctMenu').hidden = true; await invoke('sign_out'); goSignIn(); });
+$('acctBtn').addEventListener('click', (e) => { e.stopPropagation(); $('acctMail').textContent = currentUser; $('acctMenu').hidden = !$('acctMenu').hidden; });
+document.addEventListener('click', (e) => { if (!e.target.closest('.acctwrap')) $('acctMenu').hidden = true; });
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && document.activeElement === document.body) $('go')?.click(); });
 
 (async () => { const me = await invoke('me'); me ? goApp(me) : goSignIn(); })();

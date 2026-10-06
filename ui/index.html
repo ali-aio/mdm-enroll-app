@@ -1,48 +1,64 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AIO Enroll</title>
-<link rel="stylesheet" href="fonts/fonts.css">
-<link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="app.css">
 <link rel="stylesheet" href="guide.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<main id="picker" hidden>
+<main id="picker" class="gate" hidden data-tauri-drag-region>
   <div class="who2">
+    <div class="logo"><svg class="ic" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></div>
     <h1>Who’s signing in?</h1>
     <p class="sub" id="pickMsg"></p>
     <div class="tiles" id="tiles"></div>
   </div>
 </main>
 
-<main id="signin" hidden>
-  <form id="signinForm" class="card narrow" autocomplete="on">
-    <div class="logo"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></div>
+<main id="signin" class="gate" hidden data-tauri-drag-region>
+  <form id="signinForm" class="narrow" autocomplete="on">
+    <div class="logo"><svg class="ic" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg></div>
     <h1>AIO Enroll</h1>
     <p class="sub">Sign in with your MDM account.</p>
-    <label>Email or username<input id="u" name="username" autocomplete="username" required></label>
-    <label>Password<input id="p" name="password" type="password" autocomplete="current-password" required></label>
-    <label class="chk2"><input type="checkbox" id="remember" checked> Save my password on this computer</label>
+    <div class="group form">
+      <label class="row"><span class="k">Email</span><input id="u" name="username" autocomplete="username" placeholder="name@aioapp.com" required></label>
+      <label class="row"><span class="k">Password</span><input id="p" name="password" type="password" autocomplete="current-password" placeholder="Required" required></label>
+    </div>
+    <label class="chk2"><input type="checkbox" id="remember" checked> Remember my password on this Mac</label>
     <p id="signinErr" class="err" role="alert"></p>
-    <button class="cc-btn primary" id="signinBtn">Sign in</button>
-    <button type="button" class="cc-btn" id="backToPicker" hidden>← Back to accounts</button>
+    <div class="formacts"><button type="button" class="cc-btn" id="backToPicker" hidden>Back</button><button class="cc-btn primary" id="signinBtn">Sign In</button></div>
   </form>
 </main>
 
 <div id="app" hidden>
-  <div class="apptop"><b>AIO Enroll</b><span class="sp"></span><button class="helpbtn" id="helpBtn" aria-label="Help" title="Help">?</button><span class="pfp" id="pfp" aria-hidden="true"></span><span id="whoName" class="who"></span><button class="cc-btn sm" id="signOut">Sign out</button></div>
-  <div class="focus">
-    <nav class="railwrap" aria-label="Devices">
+  <aside class="side" aria-label="Devices">
+    <div class="side-top" data-tauri-drag-region></div>
+    <div class="side-scroll">
+      <div class="sec">Devices</div>
       <div class="rail" id="rail"></div>
-      <div class="saved" id="pairNet"></div>
-      <div class="saved" id="foundNet"></div>
-      <button class="addw" id="addWifi"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></svg>Add over Wi-Fi</button>
-      <div class="saved" id="saved"></div>
-    </nav>
+      <div id="pairNet"></div>
+      <div id="foundNet"></div>
+      <div id="saved"></div>
+    </div>
+    <div class="side-foot">
+      <button class="sitem addw" id="addWifi"><span class="glyph" style="--g:#0a84ff"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></svg></span><span class="nm">Add over Wi-Fi…</span></button>
+      <div class="status"><span class="dot"></span><span id="foot">Watching for devices</span><span class="sp"></span><span id="today"></span></div>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="toolbar" data-tauri-drag-region>
+      <div class="tt" data-tauri-drag-region><div class="title" id="tbTitle">AIO Enroll</div><div class="sub" id="tbSub"></div></div>
+      <span class="sp" data-tauri-drag-region></span>
+      <button class="tbtn helpbtn" id="helpBtn" aria-label="Help" title="Help"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/></svg></button>
+      <div class="acctwrap">
+        <button class="acct" id="acctBtn" aria-haspopup="menu" title="Account"><span class="pfp" id="pfp" aria-hidden="true"></span><span id="whoName" class="who"></span></button>
+        <div class="menu" id="acctMenu" role="menu" hidden><div class="mhead" id="acctMail"></div><button class="mitem" id="signOut" role="menuitem">Sign Out</button></div>
+      </div>
+    </header>
+    <div class="pbar"><i id="pbar"></i></div>
     <section class="hero" id="hero" aria-live="polite"></section>
   </div>
   <aside class="drawer" id="drawer" aria-label="Help">
-    <div class="dh"><span>Help</span><button class="cc-btn sm" id="drawerX">Close</button></div>
+    <div class="dh"><span>Help</span><button class="cc-btn sm" id="drawerX">Done</button></div>
     <div class="dt"><button data-t="phone" class="on">Phone</button><button data-t="pc">Computer</button><button data-t="tr">Trouble?</button></div>
     <div class="db" id="drawerBody"></div>
   </aside>
@@ -62,7 +78,6 @@
       <div class="pm-btns"><button class="cc-btn" id="pmCancel">Cancel</button><button class="cc-btn primary" id="pmGo" disabled>Pair</button></div>
     </div>
   </div>
-  <footer><span class="dot"></span><span id="foot">Watching for devices</span><span class="sp"></span><span id="today" class="mono"></span></footer>
 </div>
 <script src="guide.js"></script>
 <script src="wifi.js"></script>

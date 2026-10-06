@@ -3,20 +3,35 @@
   "productName": "AIO Enroll",
   "version": "0.1.0",
   "identifier": "com.aioapp.enroll",
-  "build": { "frontendDist": "../ui" },
+  "build": {
+    "frontendDist": "../ui"
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "title": "AIO Enroll", "width": 900, "height": 680, "minWidth": 640, "minHeight": 480, "center": true }
+      {
+        "label": "main",
+        "title": "AIO Enroll",
+        "width": 1000,
+        "height": 700,
+        "minWidth": 760,
+        "minHeight": 520,
+        "center": true
+      }
     ],
     "security": {
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["platform-tools/*"],
-    "icon": ["icons/icon.png"]
+    "resources": [
+      "platform-tools/*"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ]
   }
 }
