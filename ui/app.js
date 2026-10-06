@@ -102,26 +102,36 @@ async function discover() {
 }
 const isConnected = (f) => devices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name));
 
+let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
+const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+
+// One quiet, collapsed row ("Nearby phones (5)") instead of a card per phone.
 function renderFound() {
   const box = $('foundNet');
   const list = found.filter((f) => !isConnected(f));
-  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || 'Phone on your network';
-  const sig = list.map((f) => f.addr + nameOf(f)).join('|');
+  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || 'Phone';
+  const sig = list.map((f) => f.addr + nameOf(f)).join('|') + '|' + nearOpen;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.innerHTML = list.length ? `<div class="sh"><span class="wave2"></span>Found on your network</div>` + list.map((f, i) =>
-    `<div class="sv fn" data-addr="${esc(f.addr)}" style="animation-delay:${i * 50}ms"><div class="svm"><span class="nm">${esc(nameOf(f))}</span><span class="svd mono">${esc(f.addr)}</span></div><button class="cc-btn primary sm" data-go>Connect</button></div>`).join('') : '';
+  const grew = list.length > nearPrev;     // the badge pops only when a new phone shows up
+  nearPrev = list.length;
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="nb-grp ${nearOpen ? 'open' : ''}">
+    <button class="nb-head" data-grp aria-expanded="${nearOpen}">${ICON.wifi.replace('class="ic"', 'class="ic nb-wifi"')}<span>Nearby phones</span><span class="nb-badge ${grew ? 'new' : ''}">${list.length}</span><span class="nb-chev">${CHEV}</span></button>
+    <div class="nb-list">${list.map((f, i) => `<div class="nb-row" data-addr="${esc(f.addr)}" style="animation-delay:${i * 40}ms"><div class="nb-a"><b>${esc(nameOf(f))}</b><span class="mono">${esc(f.addr)}</span></div><button class="nb-go" data-go>Connect</button></div>`).join('')}</div></div>`;
 }
 $('foundNet').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
   const btn = e.target.closest('[data-go]');
   if (!btn) return;
-  const row = btn.closest('.fn'), addr = row.dataset.addr;
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>';
+  const row = btn.closest('.nb-row'), addr = row.dataset.addr;
+  btn.disabled = true; btn.style.opacity = 1; btn.innerHTML = '<span class="spin"></span>';
   try { await invoke('wifi_connect', { addr }); selected = addr; wifiMode = false; heroKey = ''; await tick(); discover(); }
   catch (err) {
     btn.disabled = false; btn.textContent = 'Retry';
-    row.querySelector('.svd').textContent = 'Could not connect — pair it first (Add over Wi-Fi)';
-    row.querySelector('.svd').style.color = 'var(--danger)';
+    const sub = row.querySelector('.mono');
+    sub.textContent = 'Not paired yet — use Add over Wi-Fi';
+    sub.style.color = 'var(--danger)';
   }
 });
 

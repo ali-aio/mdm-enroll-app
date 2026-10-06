@@ -160,3 +160,28 @@ form.working input{opacity:.6;pointer-events:none;}
 .sv.fn{border-color:var(--accent-edge);background:var(--accent-soft);}
 .saved .sh{display:flex;align-items:center;gap:6px;}
 .wave2{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.4s infinite;flex:none;}
+
+/* Nearby phones: one collapsed group in the rail (nb- prefix: the dashboard stylesheet has its own .badge/.grp) */
+.nb-grp{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden;}
+.nb-head{all:unset;box-sizing:border-box;width:100%;display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;font-size:12px;font-weight:700;color:var(--text);}
+.nb-head:hover,.nb-head:focus-visible{background:var(--surface2);}
+.nb-wifi{width:15px;height:15px;color:var(--accent);flex:none;}
+.nb-badge{background:var(--accent);color:#fff;border-radius:99px;font-size:10.5px;font-weight:800;padding:1px 7px;}
+.nb-badge.new{animation:pop .35s both;}
+.nb-chev{margin-left:auto;display:flex;color:var(--muted);transition:transform .25s;}
+.nb-chev .ic{width:14px;height:14px;}
+.nb-grp.open .nb-chev{transform:rotate(90deg);}
+.nb-list{display:none;border-top:1px solid var(--border-soft);}
+.nb-grp.open .nb-list{display:block;}
+.nb-row{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:11.5px;border-bottom:1px solid var(--border-soft);animation:slidein .25s both;}
+.nb-row:last-child{border-bottom:0;}
+.nb-row:hover{background:var(--surface2);}
+.nb-a{flex:1;min-width:0;}.nb-a b{display:block;font-weight:600;}.nb-a .mono{color:var(--muted);font-size:10.5px;}
+.nb-go{opacity:0;border:1px solid var(--border);background:var(--surface);color:var(--accent-text);font:inherit;font-size:10.5px;font-weight:700;border-radius:7px;padding:2px 9px;cursor:pointer;transition:opacity .15s;}
+.nb-row:hover .nb-go,.nb-go:focus,.nb-go:disabled{opacity:1;}
+@media (hover:none){.nb-go{opacity:1;}}
+
+/* quieter "Add over Wi-Fi" */
+.addw{background:transparent;color:var(--muted);border:1px dashed var(--border);font-weight:600;padding:7px 10px;font-size:11.5px;}
+.addw:hover{color:var(--accent-text);border-color:var(--accent-edge);background:var(--accent-soft);}
+.addw.on{background:var(--accent);color:#fff;border-style:solid;border-color:var(--accent);}
