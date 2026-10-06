@@ -86,19 +86,38 @@ const Wifi = (() => {
       }
     };
 
-    // Watch for the phone's pairing screen; its address is filled in for the person.
+    // Watch for pairing screens. Several phones can be in pairing mode at once, so list them all
+    // and let the person pick theirs (a lone one is chosen for them).
+    let pairings = [], chosen = '', sig = '';
+    const serialOf = (svc) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(svc.name || ''); return m ? m[1] : ''; };
+    const nameOf = (svc) => (ctx.nameForHost ? ctx.nameForHost(svc.addr.split(':')[0]) : '') || 'Phone';
+    function drawPairings() {
+      const s = pairings.map((p) => p.addr).join('|') + '#' + chosen;
+      if (s === sig) return;
+      sig = s;
+      if (!pairings.length) {
+        list.innerHTML = '<div class="found"><div class="wave"><b></b><b></b></div><div class="m"><b>Waiting for the pairing screen…</b><span>Open “Pair device with pairing code” on the phone.</span></div></div>';
+        return;
+      }
+      list.innerHTML = (pairings.length > 1 ? '<div class="hint" style="font-size:11px;color:var(--muted);margin-top:6px">Several phones are showing a pairing screen. Pick the one you are pairing.</div>' : '') +
+        pairings.map((p) => {
+          const sn = serialOf(p), on = p.addr === chosen;
+          return `<button class="found pick ${on ? 'sel' : ''}" data-addr="${esc(p.addr)}" aria-pressed="${on}"><div class="ph2">${PH}</div><div class="m"><b>${esc(nameOf(p))}${pairings.length > 1 ? '' : ' · pairing screen found'}</b><span class="mono">${esc(p.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</span></div><span class="radio ${on ? 'on' : ''}">${on ? CHECKSVG : ''}</span></button>`;
+        }).join('');
+      list.querySelectorAll('[data-addr]').forEach((b) => { b.onclick = () => { if (busy) return; chosen = b.dataset.addr; detected = chosen; sig = ''; drawPairings(); syncEnable(); pc.focus(); }; });
+    }
     (async () => {
       while (alive()) {
         let svcs = [];
         try { svcs = await invoke('wifi_discover'); } catch {}
         if (!alive()) return;
-        const pairing = svcs.find((x) => x.kind === 'pairing');
-        detected = pairing ? pairing.addr : '';
+        pairings = svcs.filter((x) => x.kind === 'pairing');
+        if (pairings.length === 1) chosen = pairings[0].addr;               // only one: no choice to make
+        else if (!pairings.some((p) => p.addr === chosen)) chosen = '';     // the chosen one went away
+        detected = chosen;
+        drawPairings();
         if (!busy) syncEnable();
-        list.innerHTML = pairing
-          ? `<div class="found"><div class="ph2">${PH}</div><div class="m"><b>Pairing screen found</b><span class="mono">${esc(pairing.addr.split(':')[0])}</span></div>${CHECKSVG}</div>`
-          : '<div class="found"><div class="wave"><b></b><b></b></div><div class="m"><b>Waiting for the pairing screen…</b><span>Open “Pair device with pairing code” on the phone.</span></div></div>';
-        if (pairing && !cs[2].classList.contains('on') && !done[2]) { done[0] = done[1] = true; show(2); }
+        if (chosen && !cs[2].classList.contains('on') && !done[2]) { done[0] = done[1] = true; show(2); }
         await Guide.sleep(2000);
       }
     })();

@@ -258,6 +258,7 @@ function renderHero() {
     hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
     Wifi.draw(hero.querySelector('.wbody'), {
       invoke, esc, Guide, alive, devices: () => devices,
+      nameForHost: (host) => (savedPhones.find((p) => p.host === host) || {}).name || '',
       onConnected: (addr) => {
         const host = String(addr).split(':')[0];
         unignore(host);

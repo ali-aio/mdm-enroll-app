@@ -94,3 +94,9 @@
 .lnk{color:var(--accent-text);font-weight:700;cursor:pointer;text-decoration:underline;}
 .wform input:disabled{opacity:.5;cursor:not-allowed;background:var(--surface-3);}
 .wform .cc-btn:disabled{opacity:.5;cursor:not-allowed;}
+
+.found.pick{width:100%;text-align:left;font:inherit;color:var(--text);cursor:pointer;transition:border-color .2s,background .2s;}
+.found.pick:hover{border-color:var(--accent);}
+.found.pick.sel{border-style:solid;border-color:var(--accent);background:var(--accent-soft);}
+.radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none;}
+.radio.on{border-color:var(--ok);background:var(--ok-bg);}.radio .check{width:11px;height:11px;stroke-width:3.5;}
