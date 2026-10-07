@@ -20,6 +20,7 @@
     { name: 'adb-DP02256HJ0342-VoAlNv', kind: 'connect', addr: '10.32.1.13:40801' },
     { name: 'adb-AT070AABU00875-Qq11Ww', kind: 'connect', addr: '10.32.2.167:41001' },
     { name: 'adb-R95Y405MG3X-XGrWQf', kind: 'connect', addr: '10.32.1.211:44793' },
+    { name: 'adb-AT070AA2600030', kind: 'connect', addr: '10.32.2.75:5555' },
   ].concat(S === 'pair' ? [{ name: 'adb-AT070AA2600031-Zz99Yy', kind: 'pairing', addr: '10.32.0.120:37971' }] : []);
   const RESTAURANTS = [
     { id: 'r1', name: 'Burger Hub · Gulberg', address: 'Main Blvd, Lahore', device_count: 12 },
@@ -30,6 +31,7 @@
   const CLASS = {
     DP02256HJ0342: { class: 'other' }, R95Y405MG3X: { class: 'family', family: 'SUNMI D3 Pro', family_count: 3, device_class: 'pos' },
     AT070AABU00875: { class: 'production', production: 'T7 batch BU', model: '07' },
+    AT070AA2600030: { class: 'fleet', name: 'AIO T7', device_class: 't7' },
     AT070AA2600031: { class: 'fleet', name: 'AIO T7', device_class: 't7' },
   };
   const signedIn = !['signin', 'picker'].includes(S);
@@ -55,7 +57,7 @@
       DEVICES.push(row({ handle: host + ':5555', name: 'AIO T7', serial: 'AT070AABU00875', android: '15', status: 'firmware', firmware_version: '1.8.8', server_seen: false })); return host + ':5555'; },
     restaurants: () => RESTAURANTS,
     agent_info: () => ({ version: '0.2.8', version_code: 208 }),
-    serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
+    serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { if (s === 'AT070AA2600030') return [s, { enrolled: false, status: 'auto', last_seen_at: new Date(Date.now() - 3 * 86400e3).toISOString() }]; const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
     device_checks: ({ handle }) => {
       const left = Math.max(0, 2 - (window.__checks = (window.__checks || 0) + (window.__accountsOpened ? 1 : 0)));
       if (!left) DEVICES.filter((x) => x.handle === handle).forEach((x) => Object.assign(x, { status: 'ready', note: '' }));

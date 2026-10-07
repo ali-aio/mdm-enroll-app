@@ -212,16 +212,33 @@ async function classifyFor(list) {
   if (!need.length || now < classOffUntil) return;
   try {
     const m = await invoke('classify_serials', { serials: need });
-    need.forEach((s) => classCache.set(s, { c: m[s] || { class: 'other' }, t: now }));
+    // A device the MDM knows may still not be managed now (e.g. reflashed with firmware that has no
+    // MDM client): ask when it last checked in, so the label can say so.
+    const fleet = need.filter((s) => (m[s] || {}).class === 'fleet');
+    let seen = {};
+    if (fleet.length) { try { seen = await invoke('serial_statuses', { serials: fleet }); } catch {} }
+    need.forEach((s) => {
+      const c = { ...(m[s] || { class: 'other' }) };
+      if (c.class === 'fleet' && seen[s]) { c.last_seen = seen[s].last_seen_at || ''; c.checked = true; }
+      classCache.set(s, { c, t: now });
+    });
   } catch { classOffUntil = now + 60000; }      // older server / offline: no labels, nothing breaks
 }
+const STALE_MS = 3600e3;                         // not heard from for an hour: not managed right now
+const agoShort = (ts) => {
+  const s = (Date.now() - Date.parse(ts)) / 1000;
+  return s < 3600 ? Math.round(s / 60) + ' min' : s < 86400 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d';
+};
 // What the MDM knows about a nearby phone, in two or three words; the full sentence is the tooltip.
 const classChipHTML = (c) => {
   if (!c) return '';
   const dc = c.device_class ? ' · ' + c.device_class : '';
   const n = c.family_count || 0;
   const k = {
-    fleet: ['fleet', CHECK_I + ' Enrolled' + dc, 'Already enrolled in the MDM' + (c.device_class ? ' as ' + c.device_class : '')],
+    fleet: !c.checked || (c.last_seen && Date.now() - Date.parse(c.last_seen) < STALE_MS)
+      ? ['fleet', CHECK_I + ' Enrolled' + dc, 'Already enrolled in the MDM' + (c.device_class ? ' as ' + c.device_class : '')]
+      : ['look', c.last_seen ? 'Offline ' + agoShort(c.last_seen) : 'In MDM · never seen',
+        `The MDM has this device on record${c.device_class ? ' as ' + c.device_class : ''}, but it hasn’t checked in ${c.last_seen ? 'since ' + new Date(c.last_seen).toLocaleString() : 'yet'}. Its MDM client may be missing (for example, firmware built without it).`],
     production: ['prod', 'AIO · new', `Serial is in production “${c.production || 'unknown batch'}”, not enrolled yet`],
     family: ['prod', 'Known model' + dc, `Same model as ${n || 'other'} enrolled device${n === 1 ? '' : 's'}${c.family ? ' (' + c.family + ')' : ''}${c.device_class ? ', used as ' + c.device_class : ''}`],
     lookalike: ['look', 'Serial like ours', 'Serial follows our pattern but matches no production'],
@@ -266,7 +283,7 @@ function renderFound() {
     list = [...list].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x)));          // ours first (stable)
     if (onlyOurs) list = list.filter((f) => isOurs(clsOf(f)));
   }
-  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '') + ((clsOf(f) || {}).device_class || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
+  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '') + ((clsOf(f) || {}).device_class || '') + ((clsOf(f) || {}).last_seen || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
   nearPrev = total;
@@ -275,14 +292,14 @@ function renderFound() {
   box.innerHTML = `<div class="sec toggle" data-grp role="button" aria-expanded="${nearOpen}">${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}</div>` +
     (nearOpen ? (list.length ? list.map((f, i) => {
       const c = clsOf(f), sn = serialFromName(f);
-      return `<button class="sitem in ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 35}ms" title="Pair this phone"><span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><span class="go" data-go>Pair</span></button>`;
+      return `<div class="sitem in ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 35}ms"><span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><button class="cc-btn sm" data-go>Pair</button></div>`;
     }).join('') : '<div class="sec" style="font-weight:400">None of these are ours.</div>') : '');
 }
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
   const row = e.target.closest('[data-addr]');
-  if (row) {
+  if (row && e.target.closest('[data-go]')) {
     const f = found.find((x) => x.addr === row.dataset.addr) || { addr: row.dataset.addr, name: '' };
     openPairFor(hostOf(f.addr), (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || (clsOf(f) || {}).name || 'Phone', serialFromName(f), clsOf(f));
   }
