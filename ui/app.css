@@ -367,3 +367,8 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
   .split { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }
+
+/* bold words inside a step's description stay inline (guide.css made every <b> a block) */
+.cs .d b, .cs span b, .wsplit .cs .d b { display: inline; font-size: inherit; }
+.waitmsg { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.pm-ask b { color: var(--text); font-weight: 600; }

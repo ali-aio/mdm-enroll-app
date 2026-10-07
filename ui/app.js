@@ -246,7 +246,11 @@ function renderFound() {
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
-  if (e.target.closest('[data-addr]')) openPair();
+  const row = e.target.closest('[data-addr]');
+  if (row) {
+    const f = found.find((x) => x.addr === row.dataset.addr) || { addr: row.dataset.addr, name: '' };
+    openPairFor(hostOf(f.addr), (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || (clsOf(f) || {}).name || 'Phone', serialFromName(f), clsOf(f));
+  }
 });
 
 
@@ -282,6 +286,7 @@ function openPairModal(s) {
   $('pmTitle').textContent = 'Pair with ' + pairName(s);
   $('pmMeta').textContent = s.addr.split(':')[0] + (sn ? ' · ' + sn : '');
   $('pmAsk').textContent = 'Enter the 6-digit code shown on the phone.';
+  $('pmCode').hidden = false;
   const hc = clsOf(s), hint = $('pmHint');
   hint.hidden = !hc || hc.class === 'other';
   hint.innerHTML = hc && hc.class !== 'other' ? classChipHTML(hc) : '';
@@ -291,9 +296,28 @@ function openPairModal(s) {
   $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
   $('pairModal').hidden = false;
   setTimeout(() => $('pmCode').focus(), 50);
+  $('pmCode').animate([{ boxShadow: '0 0 0 0 rgba(249,103,78,.5)' }, { boxShadow: '0 0 0 8px rgba(249,103,78,0)' }], { duration: 700 });
+}
+// Pair one particular phone (from Nearby or Saved). Its pairing screen may not be open yet: show the
+// sheet straight away with the instructions, and fill in the address the moment that phone (same IP)
+// announces its pairing screen.
+let pairWantHost = '';
+function openPairFor(host, name, serial, cls) {
+  const s = pairScreens.find((x) => hostOf(x.addr) === host);
+  if (s) { pairWantHost = ''; pairDismissed.delete(s.addr); return openPairModal(s); }
+  pairWantHost = host; pairAddr = ''; pairBusy = false;
+  $('pmIc').innerHTML = ICON.phone;
+  $('pmTitle').textContent = 'Pair with ' + name;
+  $('pmMeta').textContent = host + (serial ? ' · ' + serial : '');
+  const hint = $('pmHint'); hint.hidden = !cls || cls.class === 'other'; hint.innerHTML = cls && cls.class !== 'other' ? classChipHTML(cls) : '';
+  $('pmAsk').innerHTML = 'On the phone: <b>Developer options → Wireless debugging → Pair device with pairing code</b>.';
+  $('pmCode').value = ''; $('pmCode').disabled = true; $('pmCode').hidden = false;
+  $('pmMsg').innerHTML = '<div class="wmsg waitmsg"><span class="spin"></span> Waiting for its pairing screen…</div>';
+  $('pmConn').hidden = true; $('pmGo').hidden = false; $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
+  $('pairModal').hidden = false;
 }
 function closePairModal() { $('pairModal').hidden = true; pairAddr = ''; pairBusy = false; }
-function dismissPairModal() { if (pairAddr) pairDismissed.add(pairAddr); closePairModal(); }
+function dismissPairModal() { if (pairAddr) pairDismissed.add(pairAddr); pairWantHost = ''; closePairModal(); }
 $('pmCancel').addEventListener('click', dismissPairModal);
 $('pairModal').addEventListener('click', (e) => { if (e.target === $('pairModal') && !pairBusy) dismissPairModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('pairModal').hidden && !pairBusy) dismissPairModal(); });
@@ -355,6 +379,11 @@ $('pmConnBtn').addEventListener('click', async () => {
 // A NEW pairing screen pops the code popup up by itself (not while the Add-over-Wi-Fi panel is
 // open, which handles it); one the person closed stays closed until it goes away and comes back.
 function autoPairPopup() {
+  if (pairWantHost && !$('pairModal').hidden && !pairAddr) {
+    const s = pairScreens.find((x) => hostOf(x.addr) === pairWantHost);
+    if (s) { pairWantHost = ''; pairAutoOpened.add(s.addr); openPairModal(s); }
+    return;
+  }
   const live = new Set(pairScreens.map((s) => s.addr));
   for (const a of [...pairAutoOpened]) if (!live.has(a)) { pairAutoOpened.delete(a); pairDismissed.delete(a); }
   if (pairAddr && !live.has(pairAddr) && !pairBusy) {
@@ -393,7 +422,10 @@ $('saved').addEventListener('click', async (e) => {
     delete $('saved').dataset.sig;      // an empty list has the same signature as before; force the redraw
     return renderSaved();
   }
-  if (e.target.closest('[data-re]')) openPair();
+  if (e.target.closest('[data-re]')) {
+    const p = savedPhones.find((x) => x.host === host) || {};
+    openPairFor(host, p.name || 'Phone', p.serial || '', null);
+  }
 });
 $('addWifi').addEventListener('click', () => { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); });
 
