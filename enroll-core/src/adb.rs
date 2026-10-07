@@ -214,9 +214,48 @@ pub fn fix_pairing_hosts(svcs: &mut [MdnsService], is_open: impl Fn(&str) -> boo
 
 /// Answers a TCP connection within `ms` milliseconds.
 pub fn tcp_open(addr: &str, ms: u64) -> bool {
-    addr.to_socket_addrs().ok().and_then(|mut a| a.next())
-        .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(ms)).is_ok())
-        .unwrap_or(false)
+    tcp_probe(addr, ms) == Tcp::Open
+}
+
+/// How an address answers: `Refused` means the host is there but nothing listens on the port
+/// (a pairing dialog that was closed); `Silent` means no answer at all (wrong or sleeping host).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Tcp {
+    Open,
+    Refused,
+    Silent,
+}
+
+pub fn tcp_probe(addr: &str, ms: u64) -> Tcp {
+    let Some(sa) = addr.to_socket_addrs().ok().and_then(|mut a| a.next()) else { return Tcp::Silent };
+    match TcpStream::connect_timeout(&sa, Duration::from_millis(ms)) {
+        Ok(_) => Tcp::Open,
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => Tcp::Refused,
+        Err(_) => Tcp::Silent,
+    }
+}
+
+/// adb's mDNS list keeps a pairing screen for a while after the phone closes the dialog (pairing
+/// cancelled, or Back pressed). The dialog's port is closed by then, so drop a pairing service when
+/// no address of that phone has the port open and at least one refuses it: the phone is there, the
+/// dialog is not. One that is merely silent stays (a mixed-up or sleeping address proves nothing).
+pub fn drop_closed_pairing(svcs: &mut Vec<MdnsService>, probe: impl Fn(&str) -> Tcp) {
+    let snapshot = svcs.clone();
+    svcs.retain(|s| {
+        if s.kind != "pairing" {
+            return true;
+        }
+        let Some((_, port)) = s.addr.rsplit_once(':') else { return true };
+        let mut hosts: Vec<&str> = vec![host_of(&s.addr)];
+        for o in snapshot.iter().filter(|o| o.name == s.name) {
+            let h = host_of(&o.addr);
+            if !hosts.contains(&h) {
+                hosts.push(h);
+            }
+        }
+        let answers: Vec<Tcp> = hosts.iter().map(|h| probe(&format!("{h}:{port}"))).collect();
+        answers.contains(&Tcp::Open) || !answers.contains(&Tcp::Refused)
+    });
 }
 
 /// Why a phone cannot be enrolled, or None. Accounts only matter BEFORE our agent is Device Owner
@@ -287,6 +326,7 @@ impl Adb {
     pub fn mdns_services(&self) -> Vec<MdnsService> {
         let mut v = parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default());
         fix_pairing_hosts(&mut v, |a| tcp_open(a, 400));
+        drop_closed_pairing(&mut v, |a| tcp_probe(a, 400));
         v
     }
 
@@ -972,5 +1012,28 @@ mod tests {
         assert_eq!(parse_user_count("Users:\n\tUserInfo{0:Owner:c13} running\n"), 1);
         assert_eq!(parse_version_code("    versionCode=208 minSdk=26 targetSdk=34\n    versionName=0.2.8\n"), 208);
         assert_eq!(parse_version_code("Unable to find package"), 0);
+    }
+
+    #[test]
+    fn closed_pairing_dialogs_are_dropped() {
+        let svc = |name: &str, kind: &str, addr: &str| MdnsService { name: name.into(), kind: kind.into(), addr: addr.into() };
+        let all = vec![
+            svc("adb-A-1", "pairing", "10.0.0.5:37001"),   // dialog closed: port refused
+            svc("adb-A-1", "connect", "10.0.0.5:41000"),
+            svc("adb-B-2", "pairing", "10.0.0.9:38000"),   // dialog open
+            svc("adb-C-3", "pairing", "10.0.0.7:39000"),   // phone asleep / wrong address: silent
+        ];
+        let mut v = all.clone();
+        drop_closed_pairing(&mut v, |a| match a {
+            "10.0.0.5:37001" => Tcp::Refused,
+            "10.0.0.9:38000" => Tcp::Open,
+            _ => Tcp::Silent,
+        });
+        let left: Vec<&str> = v.iter().map(|s| s.addr.as_str()).collect();
+        assert_eq!(left, vec!["10.0.0.5:41000", "10.0.0.9:38000", "10.0.0.7:39000"]);
+        // A stale address that refuses, but the phone's real address still has the dialog open: keep it.
+        let mut v = vec![svc("adb-D-4", "pairing", "10.0.0.20:40000"), svc("adb-D-4", "connect", "10.0.0.21:41000")];
+        drop_closed_pairing(&mut v, |a| if a == "10.0.0.21:40000" { Tcp::Open } else { Tcp::Refused });
+        assert_eq!(v.len(), 2);
     }
 }

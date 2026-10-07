@@ -74,4 +74,5 @@
   window.__mockEmit = emit;
   // Tests: make a phone open its pairing screen, e.g. __mockAddPairing('10.32.2.167:37001', 'adb-AT070AABU00875-Pp00Qq')
   window.__mockAddPairing = (addr, name) => DISC.push({ name, kind: 'pairing', addr });
+  window.__mockRemovePairing = (addr) => { const i = DISC.findIndex((d) => d.addr === addr); if (i >= 0) DISC.splice(i, 1); };
 })();

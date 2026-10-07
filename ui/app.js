@@ -417,10 +417,10 @@ function autoPairPopup() {
   }
   const live = new Set(pairScreens.map((s) => s.addr));
   for (const a of [...pairAutoOpened]) if (!live.has(a)) { pairAutoOpened.delete(a); pairDismissed.delete(a); }
-  if (pairAddr && !live.has(pairAddr) && !pairBusy) {
-    // The dialog on the phone was closed while the popup was open.
-    $('pmMsg').innerHTML = '<div class="wmsg" style="background:var(--surface-3)">The pairing screen on the phone closed. Open “Pair device with pairing code” again.</div>';
-    $('pmCode').disabled = true; $('pmGo').disabled = true;
+  if (pairAddr && !live.has(pairAddr) && !pairBusy && !$('pairModal').hidden) {
+    // The dialog on the phone was closed (pairing cancelled, or Back) while the popup was open.
+    closePairModal();
+    alertBanner('Pairing was cancelled on the phone.');
     return;
   }
   if (!$('pairModal').hidden) return;
