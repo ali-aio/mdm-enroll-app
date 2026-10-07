@@ -211,12 +211,19 @@ async function classifyFor(list) {
     need.forEach((s) => classCache.set(s, { c: m[s] || { class: 'other' }, t: now }));
   } catch { classOffUntil = now + 60000; }      // older server / offline: no labels, nothing breaks
 }
+// What the MDM knows about a nearby phone, in two or three words; the full sentence is the tooltip.
 const classChipHTML = (c) => {
   if (!c) return '';
-  const k = { fleet: ['fleet', CHECK_I + ' In your fleet' + (c.device_class ? ' · ' + c.device_class : '')], production: ['prod', 'AIO · ' + (c.production || 'production')],
-    family: ['prod', 'Like your ' + (c.family || 'enrolled devices') + (c.device_class ? ' · ' + c.device_class : '')],
-    lookalike: ['look', 'Looks like ours?'], other: ['oth', 'Other phone'] }[c.class];
-  return k ? `<span class="nb-chip ${k[0]}">${k[1]}</span>` : '';
+  const dc = c.device_class ? ' · ' + c.device_class : '';
+  const n = c.family_count || 0;
+  const k = {
+    fleet: ['fleet', CHECK_I + ' Enrolled' + dc, 'Already enrolled in the MDM' + (c.device_class ? ' as ' + c.device_class : '')],
+    production: ['prod', 'AIO · new', `Serial is in production “${c.production || 'unknown batch'}”, not enrolled yet`],
+    family: ['prod', 'Known model' + dc, `Same model as ${n || 'other'} enrolled device${n === 1 ? '' : 's'}${c.family ? ' (' + c.family + ')' : ''}${c.device_class ? ', used as ' + c.device_class : ''}`],
+    lookalike: ['look', 'Serial like ours', 'Serial follows our pattern but matches no production'],
+    other: ['oth', 'Not ours', 'The MDM knows nothing about this phone'],
+  }[c.class];
+  return k ? `<span class="nb-chip ${k[0]}" title="${esc(k[2])}">${k[1]}</span>` : '';
 };
 const CHECK_I = '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 // The class a phone of a known family should get (learned from the enrolled devices of that family).

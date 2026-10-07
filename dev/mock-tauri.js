@@ -28,7 +28,7 @@
     { id: 'r4', name: 'Pizza Lab · Clifton', address: 'Karachi', device_count: 7 },
   ];
   const CLASS = {
-    DP02256HJ0342: { class: 'other' }, R95Y405MG3X: { class: 'other' },
+    DP02256HJ0342: { class: 'other' }, R95Y405MG3X: { class: 'family', family: 'SUNMI D3 Pro', family_count: 3, device_class: 'pos' },
     AT070AABU00875: { class: 'production', production: 'T7 batch BU', model: '07' },
     AT070AA2600031: { class: 'fleet', name: 'AIO T7', device_class: 't7' },
   };
