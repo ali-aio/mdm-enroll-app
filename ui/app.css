@@ -361,6 +361,12 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
 .found { border: 0; background: var(--group); box-shadow: 0 0 0 .5px var(--sep); }
 .wform input { border-radius: 7px; background: var(--group); }
 
+@media (max-width: 860px) {
+  #app { grid-template-columns: 210px 1fr; }
+  #app .pm-back { left: 210px; }
+  .hero { padding: 20px 20px 28px; }
+  .split { grid-template-columns: 1fr 170px; gap: 18px; }
+}
 @media (max-width: 760px) {
   #app { grid-template-columns: 200px 1fr; }
   #app .pm-back { left: 200px; }

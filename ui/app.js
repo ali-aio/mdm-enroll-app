@@ -51,8 +51,10 @@ let userZoom = parseFloat(store.get('zoom', '1')) || 1;
 function applyZoom() {
   // macOS: native size (the system already scales for Retina). Linux/Windows: grow with the window,
   // so a maximised window on a big screen is not a small app in a sea of space.
+  // Linux/Windows render the Mac's 13 px text small, so they start at 1.15× and grow from there
+  // (a narrow-but-tall tiled window still gets the 1.15× base).
   const auto = document.documentElement.dataset.os === 'mac' ? 1
-    : Math.min(1.5, Math.max(1, Math.min(window.innerWidth / 1000, window.innerHeight / 700)));
+    : Math.min(1.5, Math.max(1.15, Math.min(window.innerWidth / 900, window.innerHeight / 640)));
   document.documentElement.style.zoom = String(+(auto * userZoom).toFixed(3));
 }
 window.addEventListener('resize', applyZoom);
