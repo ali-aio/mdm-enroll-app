@@ -158,6 +158,9 @@ function mergeDevices(rows) {
   });
   return out;
 }
+// Plain adb on port 5555 (AIO firmware with the key built in, or after "Switch to Wi-Fi"): trusted by
+// key, not by pairing, so there is nothing to unpair.
+const plainAdb = (d) => { const w = (d.conns || []).filter((c) => c.kind === 'wifi').map((c) => c.handle); return w.length > 0 && w.every((h) => /:5555$/.test(h)); };
 const connIcons = (d) => (d.hasUsb ? ICON.usb : '') + (d.wifiHandle ? ICON.wifi : '');
 const connLabel = (d) => (d.hasUsb && d.wifiHandle ? 'USB + Wi-Fi' : d.wifiHandle ? 'Wi-Fi' : 'USB');
 const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.handle === h)) || {}).serial) || store.get('class', 'dongle');
@@ -197,7 +200,8 @@ let discTimer = null, discBusy = false;
 const classCache = new Map();          // serial -> { c: {class,…}, t }
 let classOffUntil = 0;
 let onlyOurs = store.get('onlyOurs', '0') === '1';
-const serialFromName = (s) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(s.name || ''); return m ? m[1] : ''; };
+// adb-<SERIAL>-<random> (Wireless debugging) or adb-<SERIAL> (plain adb on port 5555, e.g. AIO firmware).
+const serialFromName = (s) => { const n = s.name || ''; const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(n) || /^adb-([A-Za-z0-9]{8,20})$/.exec(n); return m ? m[1] : ''; };
 const clsOf = (svc) => (classCache.get(serialFromName(svc)) || {}).c || null;
 const isOurs = (c) => !!c && ['fleet', 'production', 'family', 'lookalike'].includes(c.class);
 const classKnown = () => classCache.size > 0;
@@ -286,7 +290,7 @@ $('foundNet').addEventListener('click', async (e) => {
 
 
 // ---- Pairing screens: listed in the rail, and a popup asks for the code ----
-const serialOfSvc = (s) => { const m = /^adb-(.+)-[A-Za-z0-9]{4,8}$/.exec(s.name || ''); return m ? m[1] : ''; };
+const serialOfSvc = serialFromName;
 const pairName = (s) => (savedPhones.find((p) => s.addr.startsWith(p.host + ':')) || {}).name || (clsOf(s) || {}).name || 'Phone';
 let pairAddr = '', pairBusy = false;
 const pairDismissed = new Set();    // closed by the person: don't pop up again until it goes away and returns
@@ -648,7 +652,8 @@ function renderHero() {
   const canSwitch = !isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status);
   const connG = group('Connection', [
     d.hasUsb ? row(ICON.usb + 'USB cable', '', pill('ok', 'Connected')) : '',
-    d.wifiHandle ? row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(wifiAddr)}</span>`, `<button class="lnk" data-forget ${d.hasUsb ? `data-h="${esc(d.wifiHandle)}"` : ''} title="${d.hasUsb ? 'Disconnects the Wi-Fi link only; the cable stays connected' : 'Disconnects it for now; it reconnects by itself while it stays paired'}">Disconnect</button><button class="lnk danger" data-unpair title="Disconnects and removes the pairing, so it no longer reconnects by itself">Unpair…</button>`)
+    d.wifiHandle ? row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(wifiAddr)}</span>`, `<button class="lnk" data-forget ${d.hasUsb ? `data-h="${esc(d.wifiHandle)}"` : ''} title="${d.hasUsb ? 'Disconnects the Wi-Fi link only; the cable stays connected' : 'Disconnects it for now; Pair under Nearby connects it again'}">Disconnect</button>${
+        plainAdb(d) ? '' : '<button class="lnk danger" data-unpair title="Disconnects and removes the pairing, so it no longer reconnects by itself">Unpair…</button>'}`)
       : canSwitch ? row(ICON.wifi + 'Wi-Fi', 'Not connected', `<button class="lnk" data-towifi title="No pairing needed: reads the phone’s address over the cable and connects to it">Switch to Wi-Fi</button>`) : '',
   ], d.hasUsb && d.wifiHandle ? 'It’s safe to unplug the cable — the phone stays connected over Wi-Fi.' : '');
 

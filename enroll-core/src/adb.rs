@@ -212,6 +212,14 @@ pub fn fix_pairing_hosts(svcs: &mut [MdnsService], is_open: impl Fn(&str) -> boo
     }
 }
 
+/// "adb-X-abc123 (2)" → "adb-X-abc123": mDNS renames a clash, it is still the same phone.
+pub fn base_name(name: &str) -> &str {
+    match name.rfind(" (") {
+        Some(i) if name.ends_with(')') => &name[..i],
+        _ => name,
+    }
+}
+
 /// Answers a TCP connection within `ms` milliseconds.
 pub fn tcp_open(addr: &str, ms: u64) -> bool {
     tcp_probe(addr, ms) == Tcp::Open
@@ -235,19 +243,17 @@ pub fn tcp_probe(addr: &str, ms: u64) -> Tcp {
     }
 }
 
-/// adb's mDNS list keeps a pairing screen for a while after the phone closes the dialog (pairing
-/// cancelled, or Back pressed). The dialog's port is closed by then, so drop a pairing service when
-/// no address of that phone has the port open and at least one refuses it: the phone is there, the
-/// dialog is not. One that is merely silent stays (a mixed-up or sleeping address proves nothing).
-pub fn drop_closed_pairing(svcs: &mut Vec<MdnsService>, probe: impl Fn(&str) -> Tcp) {
+/// adb's mDNS list is often wrong about addresses: every Android announces the same hostname, so a
+/// service can be listed under another phone's IP (seen live: adb-DP02256GJ0499's connect port listed
+/// at 10.32.2.75, which is a T7), and it keeps a pairing screen for a while after the dialog closes.
+/// Drop a service when no address of that phone has its port open and at least one refuses it: the
+/// host is there, the service is not. One that is merely silent stays (a sleeping phone proves nothing).
+pub fn drop_unanswered(svcs: &mut Vec<MdnsService>, probe: impl Fn(&str) -> Tcp) {
     let snapshot = svcs.clone();
     svcs.retain(|s| {
-        if s.kind != "pairing" {
-            return true;
-        }
         let Some((_, port)) = s.addr.rsplit_once(':') else { return true };
         let mut hosts: Vec<&str> = vec![host_of(&s.addr)];
-        for o in snapshot.iter().filter(|o| o.name == s.name) {
+        for o in snapshot.iter().filter(|o| base_name(&o.name) == base_name(&s.name)) {
             let h = host_of(&o.addr);
             if !hosts.contains(&h) {
                 hosts.push(h);
@@ -302,9 +308,11 @@ pub fn parse_mdns(out: &str) -> Vec<MdnsService> {
         .filter_map(|l| {
             let mut it = l.split_whitespace();
             let (name, svc, addr) = (it.next()?, it.next()?, it.next()?);
+            // `_adb._tcp` is plain adb on a TCP port (AIO firmware, or `adb tcpip`): it connects with
+            // the adb key alone, like a Wireless-debugging connect address does after pairing.
             let kind = if svc.contains("_adb-tls-pairing") {
                 "pairing"
-            } else if svc.contains("_adb-tls-connect") {
+            } else if svc.contains("_adb-tls-connect") || svc.trim_end_matches('.') == "_adb._tcp" {
                 "connect"
             } else {
                 return None;
@@ -325,8 +333,26 @@ impl Adb {
     /// Phones on this network with Wireless debugging on (empty when mDNS is unavailable).
     pub fn mdns_services(&self) -> Vec<MdnsService> {
         let mut v = parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default());
-        fix_pairing_hosts(&mut v, |a| tcp_open(a, 400));
-        drop_closed_pairing(&mut v, |a| tcp_probe(a, 400));
+        // 10.0.2.x is Android's internal virtual network: some phones announce it, nothing can reach it.
+        v.retain(|s| !host_of(&s.addr).starts_with("10.0.2."));
+        // Every address any check below may try, probed once and all at the same time.
+        let mut cands: Vec<String> = Vec::new();
+        for s in &v {
+            let Some((_, port)) = s.addr.rsplit_once(':') else { continue };
+            for o in v.iter().filter(|o| base_name(&o.name) == base_name(&s.name)) {
+                let a = format!("{}:{port}", host_of(&o.addr));
+                if !cands.contains(&a) {
+                    cands.push(a);
+                }
+            }
+        }
+        let answers: std::collections::HashMap<String, Tcp> = std::thread::scope(|sc| {
+            let jobs: Vec<_> = cands.iter().map(|a| sc.spawn(move || (a.clone(), tcp_probe(a, 400)))).collect();
+            jobs.into_iter().filter_map(|j| j.join().ok()).collect()
+        });
+        let ans = |a: &str| *answers.get(a).unwrap_or(&Tcp::Silent);
+        fix_pairing_hosts(&mut v, |a| ans(a) == Tcp::Open);
+        drop_unanswered(&mut v, ans);
         v
     }
 
@@ -949,7 +975,9 @@ mod tests {
         let pairing: Vec<_> = v.iter().filter(|s| s.kind == "pairing").collect();
         assert_eq!(pairing.len(), 2);
         assert!(pairing.iter().any(|s| s.addr == "10.32.0.113:37971"));
-        assert_eq!(v.iter().filter(|s| s.kind == "connect").count(), 1); // plain _adb._tcp lines are ignored
+        // plain _adb._tcp (AIO firmware on 5555) counts as a connect address: it connects by key alone
+        assert_eq!(v.iter().filter(|s| s.kind == "connect").count(), 2);
+        assert!(v.iter().any(|s| s.addr == "10.32.2.167:5555" && s.kind == "connect"));
     }
 
     #[test]
@@ -1036,7 +1064,7 @@ mod tests {
     }
 
     #[test]
-    fn closed_pairing_dialogs_are_dropped() {
+    fn wrong_or_closed_addresses_are_dropped() {
         let svc = |name: &str, kind: &str, addr: &str| MdnsService { name: name.into(), kind: kind.into(), addr: addr.into() };
         let all = vec![
             svc("adb-A-1", "pairing", "10.0.0.5:37001"),   // dialog closed: port refused
@@ -1045,7 +1073,7 @@ mod tests {
             svc("adb-C-3", "pairing", "10.0.0.7:39000"),   // phone asleep / wrong address: silent
         ];
         let mut v = all.clone();
-        drop_closed_pairing(&mut v, |a| match a {
+        drop_unanswered(&mut v, |a| match a {
             "10.0.0.5:37001" => Tcp::Refused,
             "10.0.0.9:38000" => Tcp::Open,
             _ => Tcp::Silent,
@@ -1054,7 +1082,35 @@ mod tests {
         assert_eq!(left, vec!["10.0.0.5:41000", "10.0.0.9:38000", "10.0.0.7:39000"]);
         // A stale address that refuses, but the phone's real address still has the dialog open: keep it.
         let mut v = vec![svc("adb-D-4", "pairing", "10.0.0.20:40000"), svc("adb-D-4", "connect", "10.0.0.21:41000")];
-        drop_closed_pairing(&mut v, |a| if a == "10.0.0.21:40000" { Tcp::Open } else { Tcp::Refused });
+        drop_unanswered(&mut v, |a| if a.starts_with("10.0.0.21:") { Tcp::Open } else { Tcp::Refused });
         assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn plain_adb_services_count_as_connect() {
+        let out = "List of discovered mdns services\nadb-AT070AA2600030\t_adb._tcp\t10.32.2.75:5555\nadb-18121FDF60022T-Ab12Cd\t_adb-tls-connect._tcp\t10.32.2.210:41231\n";
+        let v = parse_mdns(out);
+        assert_eq!(v.len(), 2);
+        assert_eq!((v[0].kind.as_str(), v[0].addr.as_str(), v[0].name.as_str()), ("connect", "10.32.2.75:5555", "adb-AT070AA2600030"));
+    }
+
+    #[test]
+    fn a_service_listed_under_another_phones_ip_is_dropped() {
+        // Live on 10.32.2.75: the T7's plain adb answers, the other phone's connect port is refused there.
+        let svc = |name: &str, kind: &str, addr: &str| MdnsService { name: name.into(), kind: kind.into(), addr: addr.into() };
+        let mut v = vec![
+            svc("adb-AT070AA2600030", "connect", "10.32.2.75:5555"),
+            svc("adb-DP02256GJ0499-qYBhtQ", "connect", "10.32.2.75:39049"),
+            svc("adb-b9ab6943-K8KVWX (2)", "connect", "10.32.1.50:39347"),
+        ];
+        drop_unanswered(&mut v, |a| match a {
+            "10.32.2.75:5555" => Tcp::Open,
+            "10.32.2.75:39049" => Tcp::Refused,
+            _ => Tcp::Silent,
+        });
+        let names: Vec<&str> = v.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["adb-AT070AA2600030", "adb-b9ab6943-K8KVWX (2)"]);
+        assert_eq!(base_name("adb-b9ab6943-K8KVWX (2)"), "adb-b9ab6943-K8KVWX");
+        assert_eq!(base_name("adb-AT070AA2600030"), "adb-AT070AA2600030");
     }
 }
