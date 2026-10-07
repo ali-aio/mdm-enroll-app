@@ -743,6 +743,24 @@ async fn wifi_pair_connect(app: AppHandle, addr: String, code: String) -> Result
     .map_err(|e| e.to_string())?
 }
 
+/// Before asking for a pairing code: try connecting without one (see Adb::connect_known).
+/// `addrs` are the phone's advertised connect address(es); port 5555 on its IP is always tried too.
+/// Returns the connected handle, or null when a code is needed.
+#[tauri::command]
+async fn wifi_connect_known(app: AppHandle, host: String, addrs: Vec<String>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        let mut list: Vec<String> = addrs.into_iter().filter(|a| a.starts_with(&format!("{host}:"))).collect();
+        let legacy = format!("{host}:5555");
+        if !list.contains(&legacy) {
+            list.push(legacy);
+        }
+        Ok(adb_of(&app, &st)?.quick().connect_known(&list))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn wifi_connect(app: AppHandle, addr: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -831,7 +849,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, device_unpair, profile, last_login, restaurants, agent_info, serial_statuses, device_checks, open_accounts, agent_update, notify, open_dashboard, save_csv])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, device_unpair, profile, last_login, restaurants, agent_info, serial_statuses, device_checks, open_accounts, agent_update, notify, open_dashboard, save_csv, wifi_connect_known])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

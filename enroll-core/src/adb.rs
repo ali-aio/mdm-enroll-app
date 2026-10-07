@@ -531,6 +531,27 @@ impl Adb {
         if connect_ok(&out) { Ok(()) } else { Err(out.trim().to_string()) }
     }
 
+    /// Connects a phone that already trusts this computer's adb key, so no pairing code is needed:
+    /// AIO firmware has the key built in (adb on port 5555), and a phone paired before also accepts
+    /// it. Tries each address once and returns the first that adb then lists as authorized ("device").
+    /// One that connects but is not trusted is disconnected again, so the pairing flow starts clean.
+    pub fn connect_known(&self, addrs: &[String]) -> Option<String> {
+        for a in addrs.iter().filter(|a| valid_hostport(a)) {
+            if !connect_ok(&self.run(&["connect", a]).unwrap_or_else(|e| e)) {
+                continue;
+            }
+            for _ in 0..8 {
+                match self.devices().ok().and_then(|l| l.into_iter().find(|d| &d.handle == a)).map(|d| d.state) {
+                    Some(st) if st == "device" => return Some(a.clone()),
+                    Some(st) if st == "unauthorized" => break,
+                    _ => std::thread::sleep(Duration::from_millis(400)),
+                }
+            }
+            let _ = self.run(&["disconnect", a]);
+        }
+        None
+    }
+
     /// One `adb connect` attempt, no retries: for trying several candidate addresses quickly.
     pub fn connect_once(&self, addr: &str) -> bool {
         valid_hostport(addr) && connect_ok(&self.run(&["connect", addr]).unwrap_or_else(|e| e))

@@ -332,8 +332,29 @@ function openPairModal(s) {
 // Pair one particular phone (from Nearby or Saved). Its pairing screen may not be open yet: show the
 // sheet straight away with the instructions, and fill in the address the moment that phone (same IP)
 // announces its pairing screen.
-let pairWantHost = '';
-function openPairFor(host, name, serial, cls) {
+let pairWantHost = '', quickTok = null;
+// Pair from Nearby / Saved. A phone that already trusts this computer's adb key (AIO firmware has it
+// built in; a phone paired before does too) connects without a code, so try that first and only
+// ask for the code when it fails.
+async function openPairFor(host, name, serial, cls) {
+  const tok = (quickTok = {});
+  pairWantHost = ''; pairAddr = ''; pairBusy = false;
+  $('pmIc').innerHTML = ICON.phone;
+  $('pmTitle').textContent = 'Connecting to ' + name;
+  $('pmMeta').textContent = host + (serial ? ' · ' + serial : '');
+  const hint = $('pmHint'); hint.hidden = !cls || cls.class === 'other'; hint.innerHTML = cls && cls.class !== 'other' ? classChipHTML(cls) : '';
+  $('pmAsk').textContent = '';
+  $('pmCode').hidden = true; $('pmConn').hidden = true; $('pmGo').hidden = true;
+  $('pmMsg').innerHTML = '<div class="wmsg waitmsg"><span class="spin"></span> Trying without a code first…</div>';
+  $('pairModal').hidden = false;
+  let handle = null;
+  try { handle = await invoke('wifi_connect_known', { host, addrs: found.filter((f) => hostOf(f.addr) === host).map((f) => f.addr) }); } catch {}
+  if (quickTok !== tok || $('pairModal').hidden) return;      // cancelled meanwhile
+  $('pmCode').hidden = false; $('pmGo').hidden = false;
+  if (handle) return pairSucceeded(handle, 'Connected — no code needed');
+  askPairFor(host, name, serial, cls);
+}
+function askPairFor(host, name, serial, cls) {
   const s = pairScreens.find((x) => hostOf(x.addr) === host);
   if (s) { pairWantHost = ''; pairDismissed.delete(s.addr); return openPairModal(s); }
   pairWantHost = host; pairAddr = ''; pairBusy = false;
@@ -347,7 +368,7 @@ function openPairFor(host, name, serial, cls) {
   $('pmConn').hidden = true; $('pmGo').hidden = false; $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
   $('pairModal').hidden = false;
 }
-function closePairModal() { $('pairModal').hidden = true; pairAddr = ''; pairBusy = false; }
+function closePairModal() { $('pairModal').hidden = true; pairAddr = ''; pairBusy = false; quickTok = null; }
 function dismissPairModal() { if (pairAddr) pairDismissed.add(pairAddr); pairWantHost = ''; closePairModal(); }
 $('pmCancel').addEventListener('click', dismissPairModal);
 $('pairModal').addEventListener('click', (e) => { if (e.target === $('pairModal') && !pairBusy) dismissPairModal(); });
@@ -357,8 +378,8 @@ $('pmCode').addEventListener('input', () => {
   $('pmGo').disabled = pairBusy || c.value.length !== 6;
 });
 $('pmCode').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('pmGo').disabled) $('pmGo').click(); });
-function pairSucceeded(handle) {
-  $('pmIc').innerHTML = CHECK; $('pmTitle').textContent = 'Paired and connected';
+function pairSucceeded(handle, title = 'Paired and connected') {
+  $('pmIc').innerHTML = CHECK; $('pmTitle').textContent = title;
   $('pmAsk').textContent = ''; $('pmMsg').innerHTML = '';
   $('pmCode').hidden = true; $('pmGo').hidden = true; $('pmCancel').hidden = true; $('pmConn').hidden = true;
   unignore(String(handle).split(':')[0]);

@@ -50,6 +50,9 @@
       DEVICES.filter((x) => x.serial && x.serial === d.serial).forEach((x) => Object.assign(x, { status: 'enrolled', class: cls, online: true, restaurant: rest, agent_version: '0.2.8', dpc_version: '0.2.8', dpc_code: 208, enrolled_by: 'Ali Hassan' }));
       return { live: true, checked: true, serial: d.serial, restaurant: rest, battery_pct: 0, has_battery: false, agent_version: '0.2.8' };
     },
+    // AIO firmware trusts our adb key: 10.32.2.167 connects without a code; anything else needs one.
+    wifi_connect_known: async ({ host }) => { await new Promise((r) => setTimeout(r, 900)); if (host !== '10.32.2.167') return null;
+      DEVICES.push(row({ handle: host + ':5555', name: 'AIO T7', serial: 'AT070AABU00875', android: '15', status: 'firmware', firmware_version: '1.8.8', server_seen: false })); return host + ':5555'; },
     restaurants: () => RESTAURANTS,
     agent_info: () => ({ version: '0.2.8', version_code: 208 }),
     serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
