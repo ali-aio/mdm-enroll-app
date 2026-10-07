@@ -34,12 +34,9 @@ pub fn enroll_device(
     }
 
     progress(0, "Checking the device…");
-    if adb.account_count(handle) > 0 {
-        return Err("The device has an account on it. Factory reset it and do not add an account.".into());
-    }
     let owner = adb.owner(handle);
-    if owner.set && !owner.ours {
-        return Err(format!("Another Device Owner is set ({}). Factory reset required.", owner.package));
+    if let Some(why) = crate::adb::blocked_reason(adb.account_count(handle), &owner) {
+        return Err(format!("Can’t be enrolled: {why}."));
     }
 
     progress(1, "Getting an enrollment token…");

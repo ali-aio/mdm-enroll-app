@@ -143,7 +143,7 @@ const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.hand
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const GLYPH = { dongle: '#5e5ce6', pos: '#ff9f0a', kds: '#28b463', kiosk: '#0a84ff', t7: '#f9674e', tablet: '#f9674e', mpos: '#bf5af2', payment: '#30b0c7' };
 const glyphOf = (d) => (d.status === 'blocked' ? '#8e8e93' : GLYPH[d.class] || (d.status === 'firmware' ? '#f9674e' : '#8e8e93'));
-const stateLine = (d) => ({
+const stateLine = (d) => (d.status === 'ready' && d.dpc_owner ? 'Our agent, not registered here' : null) || ({
   ready: 'Ready to enrol', enrolling: 'Enrolling…', enrolled: 'Enrolled' + (d.class ? ' as ' + d.class : ''),
   firmware: d.server_seen ? 'AIO firmware · registered' : 'AIO firmware', blocked: 'Can’t be enrolled',
   unauthorized: 'Waiting for Allow on the phone', offline: 'Not responding',
@@ -506,7 +506,7 @@ const heroKeyFor = (d) => {
   const r = d && run[d.handle];
   return !adb.found ? 'adb|' + (guideOs || adb.os)
     : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name, d.firmware_version || '', d.agent_version || ''].join('|') : 'empty';
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name, d.firmware_version || '', d.agent_version || '', d.dpc_owner ? 'o' + d.dpc_version : ''].join('|') : 'empty';
 };
 
 function renderHero() {
@@ -583,12 +583,15 @@ function renderHero() {
   let enrolG = '', extra = '', acts = '';
   if (d.status === 'ready') {
     const cls = classOf(d.handle);
+    const ours = d.dpc_owner;
     enrolG = group('Enrollment', [
-      row('Status', '', pill('warn', 'Not enrolled')),
+      row('Status', '', ours ? pill('warn', 'Not registered with this MDM') : pill('warn', 'Not enrolled')),
+      ours ? row('AIO agent', `${esc(d.dpc_version || 'installed')} · Device Owner`) : '',
       row('Used as', '', `<div class="seg" id="seg"><span class="th"></span>${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>`),
       row('Enrolled by', esc($('whoName').textContent || 'You')),
-    ], 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
-    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go">${r?.error ? 'Try Again' : 'Enrol'}</button></div>`;
+    ], ours ? 'Our agent already manages this phone, but this MDM has no record of it — it was probably enrolled to another server, or removed here. Re-enrolling registers it here and updates the agent; nothing is reset.'
+      : 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
+    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go">${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'}</button></div>`;
   } else if (d.status === 'enrolling') {
     enrolG = group('Enrolling', STEPS.map((s, i) => stepRow(s, i, r?.step ?? 0)));
   } else if (d.status === 'enrolled') {

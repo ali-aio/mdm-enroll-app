@@ -6,12 +6,13 @@
   const handlers = {};
   const emit = (ev, payload) => (handlers[ev] || []).forEach((f) => f({ payload }));
   const row = (o) => Object.assign({ adb_state: 'device', name: '', serial: '', android: '', status: 'ready', note: '', class: '', agent_version: '',
-    firmware_version: '', build: '', server_seen: false, enrolled_by: '', server_status: '', last_seen: '' }, o);
+    firmware_version: '', build: '', server_seen: false, dpc_owner: false, dpc_version: '', enrolled_by: '', server_status: '', last_seen: '' }, o);
   const DEVICES = S === 'empty' || S === 'noadb' ? [] : [
     row({ handle: '18121FDF60022T', name: 'Google Pixel 6', serial: '18121FDF60022T', android: '17' }),
     row({ handle: '10.32.2.210:5555', name: 'Google Pixel 6', serial: '18121FDF60022T', android: '17' }),
     row({ handle: '10.32.0.113:43213', name: 'AIO T7', serial: 'AT070AA2600030', android: '15', status: 'firmware', firmware_version: '1.8.8', build: 'v2.1.025-aio-glance-22', server_seen: true, class: 't7', server_status: 'auto' }),
     row({ handle: 'adb-DK19256F40580-Ab12Cd._adb-tls-connect._tcp', name: 'SUNMI D2s_KDS_STGL', serial: 'DK19256F40580', android: '11', status: 'enrolled', class: 'kds', agent_version: '0.2.8', enrolled_by: 'Shahrukh Bashir' }),
+    row({ handle: '10.32.1.70:42719', name: 'Google Pixel 3a XL', serial: '93RAX0A0ZY', android: '12', status: 'ready', dpc_owner: true, dpc_version: '0.2.4' }),
     row({ handle: 'ADRB0AAMY00187', name: 'Google HK1 RBOX D8', serial: 'ADRB0AAMY00187', android: '11', status: 'blocked', note: 'Has an account — factory reset, don’t add an account' }),
   ];
   const DISC = [

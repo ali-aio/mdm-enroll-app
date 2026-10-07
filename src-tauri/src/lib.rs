@@ -26,6 +26,8 @@ struct Probe {
     owner: Owner,
     accounts: usize,
     firmware: Option<Firmware>,
+    /// Version of our DPC agent when it is already Device Owner, else "".
+    dpc_version: String,
     /// The phone is on the list but answers nothing.
     unresponsive: bool,
 }
@@ -46,6 +48,9 @@ struct DeviceRow {
     firmware_version: String,
     build: String,
     server_seen: bool,
+    /// Our DPC agent is already Device Owner (version below) — e.g. enrolled to another server before.
+    dpc_owner: bool,
+    dpc_version: String,
     /// Who enrolled it through the enroll app (display name), if the MDM knows.
     enrolled_by: String,
     server_status: String,
@@ -59,11 +64,14 @@ fn probe_device(q: &Adb, handle: &str) -> Probe {
     if !details.responsive() {
         return Probe { details, unresponsive: true, ..Default::default() };
     }
+    let owner = q.owner(handle);
+    let dpc_version = if owner.ours { q.package_version(handle, enroll_core::DPC_PKG) } else { String::new() };
     Probe {
-        owner: q.owner(handle),
+        owner,
         accounts: q.account_count(handle),
         firmware: q.firmware(handle),
         details,
+        dpc_version,
         unresponsive: false,
     }
 }
@@ -366,6 +374,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 serial: String::new(), android: String::new(), status: "offline".into(),
                 note: String::new(), class: String::new(), agent_version: String::new(),
                 firmware_version: String::new(), build: String::new(), server_seen: false,
+                dpc_owner: false, dpc_version: String::new(),
                 enrolled_by: String::new(),
                 server_status: String::new(), last_seen: String::new(),
             };
@@ -397,14 +406,13 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                         row.status = "firmware".into();
                         row.firmware_version = fw.version.clone();
                         row.build = fw.build.clone();
-                    } else if probe.accounts > 0 {
+                    } else if let Some(why) = enroll_core::adb::blocked_reason(probe.accounts, &probe.owner) {
                         row.status = "blocked".into();
-                        row.note = "Has an account — factory reset, don't add an account".into();
-                    } else if probe.owner.set && !probe.owner.ours {
-                        row.status = "blocked".into();
-                        row.note = format!("Owned by {} — factory reset", probe.owner.package);
+                        row.note = why;
                     } else {
                         row.status = "ready".into();
+                        row.dpc_owner = probe.owner.ours;
+                        row.dpc_version = probe.dpc_version.clone();
                     }
                 }
                 other => row.note = other.to_string(),

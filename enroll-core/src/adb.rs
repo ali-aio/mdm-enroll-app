@@ -186,6 +186,19 @@ pub fn tcp_open(addr: &str, ms: u64) -> bool {
         .unwrap_or(false)
 }
 
+/// Why a phone cannot be enrolled, or None. Accounts only matter BEFORE our agent is Device Owner
+/// (Android refuses to make an app Device Owner on a phone with accounts); once it is ours, accounts
+/// added later are fine and the phone can be re-enrolled or updated.
+pub fn blocked_reason(accounts: usize, owner: &Owner) -> Option<String> {
+    if owner.set && !owner.ours {
+        return Some(format!("Owned by {} — factory reset", owner.package));
+    }
+    if accounts > 0 && !owner.ours {
+        return Some("Has an account — factory reset, don't add an account".into());
+    }
+    None
+}
+
 /// The host part of `host:port`.
 pub fn host_of(addr: &str) -> &str {
     addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr)
@@ -625,6 +638,11 @@ impl Adb {
         Some(Firmware { version: parse_version_name(&dump), build })
     }
 
+    /// versionName of an installed package, "" if missing.
+    pub fn package_version(&self, handle: &str, pkg: &str) -> String {
+        parse_version_name(&self.shell(handle, &["dumpsys", "package", pkg]).unwrap_or_default())
+    }
+
     pub fn account_count(&self, handle: &str) -> usize {
         let out = self.shell(handle, &["dumpsys", "account"]).unwrap_or_default();
         out.matches("Account {").count()
@@ -845,6 +863,18 @@ mod tests {
         let mut none = vec![svc("adb-B-222222", "pairing", "10.0.0.6:37000"), svc("adb-C-333333", "connect", "10.0.0.7:40000")];
         fix_pairing_hosts(&mut none, |_| false);
         assert_eq!(none[0].addr, "10.0.0.6:37000");           // another phone's address is never borrowed
+    }
+
+    #[test]
+    fn accounts_only_block_before_our_agent_is_device_owner() {
+        let none = Owner::default();
+        let ours = Owner { set: true, ours: true, package: "aio.app.mdmclient.dpc".into() };
+        let theirs = Owner { set: true, ours: false, package: "com.other".into() };
+        assert!(blocked_reason(0, &none).is_none());                       // clean phone: ready
+        assert!(blocked_reason(3, &none).unwrap().contains("account"));    // accounts, nothing set up yet
+        assert!(blocked_reason(3, &ours).is_none());                       // Pixel 3a XL case: ours, accounts added later
+        assert!(blocked_reason(0, &theirs).unwrap().contains("com.other"));
+        assert!(blocked_reason(3, &theirs).unwrap().contains("com.other")); // another owner wins over accounts
     }
 
     #[test]
