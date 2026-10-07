@@ -4,6 +4,7 @@
 pub mod adb;
 pub mod api;
 pub mod enroll;
+pub mod known_hosts;
 
 /// Device class keys the MDM knows for the DPC agent (same list the server accepts).
 pub const CLASSES: &[&str] = &["dongle", "pos", "kds", "kiosk"];

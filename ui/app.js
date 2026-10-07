@@ -409,7 +409,7 @@ function renderSaved() {
   box.dataset.sig = sig;
   box.innerHTML = list.length ? `<div class="sec">Saved</div>` + list.map((p) => {
     const tip = [p.name || 'Unknown phone', p.serial ? 'S/N ' + p.serial : '', p.host, p.android ? 'Android ' + p.android : '', p.name ? '' : 'not authorized yet'].filter(Boolean).join(' · ');
-    return `<div class="sitem sv" data-host="${esc(p.host)}" title="${esc(tip)}"><span class="glyph" style="--g:#aeaeb2">${ICON.phone}</span><span class="two"><b>${esc(p.name || 'Unknown phone')}</b><small>${esc(p.serial || p.host)}</small></span><span class="go" data-re>Pair again</span><span class="x" data-rm title="Forget" aria-label="Forget">${ICON.x}</span></div>`;
+    return `<div class="sitem sv" data-host="${esc(p.host)}" title="${esc(tip)}"><span class="glyph" style="--g:#aeaeb2">${ICON.phone}</span><span class="two"><b>${esc(p.name || 'Unknown phone')}</b><small>${esc(p.serial || p.host)}</small></span><span class="go" data-re>Pair again</span><span class="x" data-rm title="Unpair and remove" aria-label="Unpair and remove">${ICON.x}</span></div>`;
   }).join('') : '';
 }
 $('saved').addEventListener('click', async (e) => {
@@ -417,6 +417,9 @@ $('saved').addEventListener('click', async (e) => {
   if (!row) return;
   const host = row.dataset.host;
   if (e.target.closest('[data-rm]')) {
+    const p = savedPhones.find((x) => x.host === host) || {};
+    if (!(await confirmSheet(`Unpair ${p.name || 'this phone'}?`, UNPAIR_BODY, 'Unpair'))) return;
+    try { alertBanner(await invoke('device_unpair', { serial: p.serial || '', handles: [] })); } catch (err) { alertBanner(String(err), true); }
     savedPhones = savedPhones.filter((p) => p.host !== host); saveSaved();
     if (!ignoredHosts.includes(host)) { ignoredHosts.push(host); saveIgnored(); }
     delete $('saved').dataset.sig;      // an empty list has the same signature as before; force the redraw
@@ -571,7 +574,7 @@ function renderHero() {
   const canSwitch = !isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status);
   const connG = group('Connection', [
     d.hasUsb ? row(ICON.usb + 'USB cable', '', pill('ok', 'Connected')) : '',
-    d.wifiHandle ? row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(wifiAddr)}</span>`, `<button class="lnk danger" data-forget ${d.hasUsb ? `data-h="${esc(d.wifiHandle)}"` : ''} title="${d.hasUsb ? 'Disconnects the Wi-Fi link only; the cable stays connected' : 'Disconnects it from this computer; it stays enrolled in the MDM'}">Forget</button>`)
+    d.wifiHandle ? row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(wifiAddr)}</span>`, `<button class="lnk" data-forget ${d.hasUsb ? `data-h="${esc(d.wifiHandle)}"` : ''} title="${d.hasUsb ? 'Disconnects the Wi-Fi link only; the cable stays connected' : 'Disconnects it for now; it reconnects by itself while it stays paired'}">Disconnect</button><button class="lnk danger" data-unpair title="Disconnects and removes the pairing, so it no longer reconnects by itself">Unpair…</button>`)
       : canSwitch ? row(ICON.wifi + 'Wi-Fi', 'Not connected', `<button class="lnk" data-towifi title="No pairing needed: reads the phone’s address over the cable and connects to it">Switch to Wi-Fi</button>`) : '',
   ], d.hasUsb && d.wifiHandle ? 'It’s safe to unplug the cable — the phone stays connected over Wi-Fi.' : '');
 
@@ -634,6 +637,27 @@ document.addEventListener('click', (e) => {
 
 function refresh() { renderRail(); renderHero(); }
 
+// A Mac-style confirmation sheet. Resolves true when the person confirms.
+function alertBanner(text, bad) {
+  let b = document.querySelector('.banner');
+  if (!b) { b = document.createElement('div'); b.className = 'banner'; document.body.appendChild(b); }
+  b.className = 'banner' + (bad ? ' bad' : ''); b.textContent = text;
+  requestAnimationFrame(() => b.classList.add('show'));
+  clearTimeout(alertBanner.t); alertBanner.t = setTimeout(() => b.classList.remove('show'), 6000);
+}
+function confirmSheet(title, bodyHTML, yesLabel) {
+  return new Promise((resolve) => {
+    $('cfTitle').textContent = title; $('cfBody').innerHTML = bodyHTML; $('cfYes').textContent = yesLabel;
+    $('confirm').hidden = false; setTimeout(() => $('cfNo').focus(), 30);
+    const done = (v) => { $('confirm').hidden = true; document.removeEventListener('keydown', key); resolve(v); };
+    const key = (e) => { if (e.key === 'Escape') done(false); };
+    document.addEventListener('keydown', key);
+    $('cfYes').onclick = () => done(true); $('cfNo').onclick = () => done(false);
+    $('confirm').onclick = (e) => { if (e.target === $('confirm')) done(false); };
+  });
+}
+const UNPAIR_BODY = 'This computer disconnects and stops reconnecting to it by itself. Pairing again needs a new code.<br><br>The phone keeps its own list: to remove this computer there too, tap it under <b>Wireless debugging → Paired devices</b> and choose <b>Forget</b>. The app opens that screen on the phone if it is still connected.';
+const serialFromHandles = (hs) => hs.map((h) => (/^adb-(.+)-[A-Za-z0-9]{4,8}\._adb-tls-/.exec(h) || [])[1]).find(Boolean) || '';
 // Every Wi-Fi connection a phone currently has (an entry may stand for several).
 const wifiHandlesOf = (d) => { const w = (d.conns || []).filter((c) => c.kind === 'wifi').map((c) => c.handle); return w.length ? w : isNet(d) ? [d.handle] : []; };
 const hero_amsg = () => document.querySelector('#hero .amsg');
@@ -665,6 +689,24 @@ $('hero').addEventListener('click', async (e) => {
       sw.disabled = false; sw.innerHTML = label;
     }
     return;
+  }
+  if (e.target.closest('[data-unpair]')) {
+    const ok = await confirmSheet(`Unpair ${d.name || 'this phone'}?`, UNPAIR_BODY, 'Unpair');
+    if (!ok) return;
+    const msg = hero_amsg(), handles = wifiHandlesOf(d), serial = d.serial || serialFromHandles(handles);
+    if (msg) msg.innerHTML = '<div class="wmsg waitmsg"><span class="spin"></span> Unpairing…</div>';
+    try {
+      const m = await invoke('device_unpair', { serial, handles });
+      const hosts = handles.filter((h) => h.includes(':')).map(hostOf);
+      savedPhones = savedPhones.filter((p) => !hosts.includes(p.host) && !(serial && p.serial === serial)); saveSaved();
+      hosts.forEach((hh) => { if (!ignoredHosts.includes(hh)) ignoredHosts.push(hh); }); saveIgnored();
+      rawDevices = rawDevices.filter((x) => !handles.includes(x.handle));
+      if (!d.hasUsb) { selected = null; devices = devices.filter((x) => x.handle !== d.handle); }
+      heroKey = ''; refresh();
+      const m2 = hero_amsg(); if (m2) m2.innerHTML = `<div class="wmsg ok">${esc(m)}</div>`;
+      else alertBanner(m);
+    } catch (err) { if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`; }
+    return tick();
   }
   const act = e.target.closest('[data-reprompt],[data-forget]');
   if (act) {

@@ -36,6 +36,7 @@
     wifi_discover: () => DISC,
     classify_serials: ({ serials }) => Object.fromEntries(serials.map((s) => [s, CLASS[s] || { class: 'other' }])),
     enroll: async ({ handle }) => { for (let i = 0; i < 7; i++) { emit('enroll-step', { handle, step: i, line: '' }); await new Promise((r) => setTimeout(r, 400)); } },
+    device_unpair: ({ serial, handles }) => { window.__unpaired = { serial, handles }; const h = new Set(handles); DEVICES.splice(0, DEVICES.length, ...DEVICES.filter((d) => !h.has(d.handle))); return 'Unpaired on this computer. On the phone, Wireless debugging is now open: tap this computer under Paired devices, then Forget.'; },
     sign_in: () => ({ username: 'muhammadali.hassan@aioapp.com', role: 'admin', server: '' }),
     sign_in_saved: () => ({ username: 'muhammadali.hassan@aioapp.com', role: 'admin', server: '' }),
   };

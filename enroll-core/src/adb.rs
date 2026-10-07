@@ -348,6 +348,31 @@ impl Adb {
         ))
     }
 
+    /// Unpairs a phone from this computer: opens its Wireless debugging screen while it is still
+    /// connected (so the person can tap Forget there; no command can do the phone's half),
+    /// disconnects every Wi-Fi connection to it, and removes it from this computer's list of paired
+    /// phones so adb stops reconnecting to it by itself.
+    /// Returns (entries removed from the paired list, whether the phone's screen was opened).
+    pub fn unpair(&self, serial: &str, handles: &[String]) -> Result<(usize, bool), String> {
+        let mut opened = false;
+        if let Some(h) = handles.iter().find(|h| valid_handle(h)) {
+            opened = self
+                .shell(h, &["am", "start", "-n", "com.android.settings/.Settings$AdbWirelessDebuggingActivity"])
+                .map(|o| !o.to_lowercase().contains("error"))
+                .unwrap_or(false);
+        }
+        for h in handles {
+            if valid_handle(h) && is_network_handle(h) {
+                let _ = self.run(&["disconnect", h]);
+            }
+        }
+        let removed = match crate::known_hosts::path() {
+            Some(p) if !serial.is_empty() => crate::known_hosts::remove_serial_at(&p, serial)?,
+            _ => 0,
+        };
+        Ok((removed, opened))
+    }
+
     /// Restarts the adb helper: clears stuck or half-open connections.
     pub fn reset(&self) {
         let _ = self.run(&["kill-server"]);

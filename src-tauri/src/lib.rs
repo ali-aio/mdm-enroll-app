@@ -629,6 +629,29 @@ async fn device_reprompt(app: AppHandle, state: tauri::State<'_, State>, handle:
     .map_err(|e| e.to_string())?
 }
 
+/// Unpair: see Adb::unpair. `serial` identifies the phone in this computer's paired list.
+#[tauri::command]
+async fn device_unpair(app: AppHandle, state: tauri::State<'_, State>, serial: String, handles: Vec<String>) -> Result<String, String> {
+    for h in &handles {
+        state.probes.lock().unwrap().remove(h);
+    }
+    let (removed, opened) = tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        adb_of(&app, &st)?.unpair(&serial, &handles)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let mut msg = String::from("Unpaired on this computer");
+    if removed == 0 { msg.push_str(" (it was not in the paired list)"); }
+    msg.push('.');
+    msg.push_str(if opened {
+        " On the phone, Wireless debugging is now open: tap this computer under Paired devices, then Forget."
+    } else {
+        " To finish on the phone: Wireless debugging → Paired devices → this computer → Forget."
+    });
+    Ok(msg)
+}
+
 #[tauri::command]
 async fn device_to_wifi(app: AppHandle, state: tauri::State<'_, State>, handle: String) -> Result<String, String> {
     state.probes.lock().unwrap().remove(&handle);
@@ -650,7 +673,7 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 pub fn run() {
     tauri::Builder::default()
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, device_unpair, profile, last_login])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

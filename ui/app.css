@@ -372,3 +372,16 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
 .cs .d b, .cs span b, .wsplit .cs .d b { display: inline; font-size: inherit; }
 .waitmsg { display: flex; align-items: center; gap: 8px; color: var(--muted); }
 .pm-ask b { color: var(--text); font-weight: 600; }
+
+/* confirmation sheet + result banner */
+.cc-btn.primary.danger, html[data-theme="dark"] .cc-btn.primary.danger { background: var(--danger-solid); }
+.cf { max-width: 400px; }
+.cf-ic { background: var(--danger-bg); color: var(--danger); }
+.cf .pm-ask { text-align: left; line-height: 1.5; }
+#confirm { left: 0 !important; z-index: 90; }
+.row .lnk + .lnk { margin-left: 2px; }
+.banner { position: fixed; top: 12px; right: 14px; z-index: 95; max-width: 360px; padding: 10px 14px; border-radius: 12px; font-size: 12.5px; line-height: 1.45;
+  background: color-mix(in srgb, var(--row) 90%, transparent); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%);
+  box-shadow: var(--shadow-pop); transform: translateX(120%); transition: transform .45s cubic-bezier(.2, 1.2, .3, 1); }
+.banner.show { transform: none; }
+.banner.bad { color: var(--danger); }

@@ -63,6 +63,14 @@
     <div class="pbar"><i id="pbar"></i></div>
     <section class="hero" id="hero" aria-live="polite"></section>
   </div>
+  <div class="pm-back" id="confirm" hidden>
+    <div class="pm-card cf" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle">
+      <div class="pm-ic cf-ic"><svg class="ic" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1M4 4l16 16"/></svg></div>
+      <h2 id="cfTitle"></h2>
+      <p class="pm-ask" id="cfBody"></p>
+      <div class="pm-btns"><button class="cc-btn" id="cfNo">Cancel</button><button class="cc-btn primary danger" id="cfYes">Unpair</button></div>
+    </div>
+  </div>
   <aside class="drawer" id="drawer" aria-label="Help">
     <div class="dh"><span>Help</span><button class="cc-btn sm" id="drawerX">Done</button></div>
     <div class="dt"><button data-t="phone" class="on">Phone</button><button data-t="pc">Computer</button><button data-t="tr">Trouble?</button></div>
