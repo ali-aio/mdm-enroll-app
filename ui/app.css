@@ -122,8 +122,7 @@ html[data-theme="dark"] .cc-btn.primary:disabled { background: var(--surface-3);
 /* ── sign in / account picker ───────────────────────────────────────────── */
 .gate { height: 100%; display: flex; align-items: center; justify-content: center; padding: 30px; background: var(--group); }
 html[data-theme="dark"] .gate { background: var(--bg); }
-.logo { width: 64px; height: 64px; border-radius: 16px; margin: 0 auto 14px; background: linear-gradient(145deg, #ff8a70, #f9674e 55%, #e14d33); color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(249, 103, 78, .35); }
-.logo .ic { width: 32px; height: 32px; stroke-width: 1.7; }
+.logo { display: block; width: 64px; height: 64px; border-radius: 14px; margin: 0 auto 14px; box-shadow: 0 6px 18px rgba(10, 95, 216, .32); }
 .gate h1 { font-size: 22px; text-align: center; }
 .gate .sub { color: var(--muted); text-align: center; margin: 4px 0 18px; font-size: 13px; }
 .narrow { width: min(360px, 100%); animation: fadeUp .4s var(--ease) both; }
