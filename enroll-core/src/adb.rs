@@ -332,6 +332,11 @@ impl Details {
 impl Adb {
     /// Phones on this network with Wireless debugging on (empty when mDNS is unavailable).
     pub fn mdns_services(&self) -> Vec<MdnsService> {
+        self.mdns_services_checked().into_iter().map(|(s, _)| s).collect()
+    }
+
+    /// Like `mdns_services`, with how each final address answered (Open = confirmed).
+    pub fn mdns_services_checked(&self) -> Vec<(MdnsService, Tcp)> {
         let mut v = parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default());
         // 10.0.2.x is Android's internal virtual network: some phones announce it, nothing can reach it.
         v.retain(|s| !host_of(&s.addr).starts_with("10.0.2."));
@@ -353,7 +358,7 @@ impl Adb {
         let ans = |a: &str| *answers.get(a).unwrap_or(&Tcp::Silent);
         fix_pairing_hosts(&mut v, |a| ans(a) == Tcp::Open);
         drop_unanswered(&mut v, ans);
-        v
+        v.into_iter().map(|s| { let t = ans(&s.addr); (s, t) }).collect()
     }
 
     /// Forgets a device that is connected over the network (`adb disconnect`).

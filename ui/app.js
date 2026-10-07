@@ -273,6 +273,34 @@ let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
 const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
 
 // One quiet, collapsed row ("Nearby phones (5)") instead of a card per phone.
+// Updates rows in place, keyed: a row that is still there keeps its element (no re-animation, no
+// flicker on each scan); only a new one slides in, and a gone one is removed.
+function syncRows(container, items, keyOf, rowOf) {
+  const have = new Map([...container.children].filter((el) => el.dataset.key).map((el) => [el.dataset.key, el]));
+  let prev = null;
+  items.forEach((it, i) => {
+    const k = keyOf(it), { cls, attrs, html } = rowOf(it);
+    let el = have.get(k);
+    if (el) have.delete(k);
+    else {
+      el = document.createElement('div');
+      el.dataset.key = k;
+      el.classList.add('in');
+      el.style.animationDelay = Math.min(i, 6) * 35 + 'ms';
+      el.addEventListener('animationend', () => el.classList.remove('in'), { once: true });
+    }
+    const want = cls + (el.classList.contains('in') ? ' in' : '');
+    if (el.className !== want) el.className = want;
+    for (const [a, v] of Object.entries(attrs || {})) if (el.getAttribute(a) !== v) el.setAttribute(a, v);
+    if (el._html !== html) { el.innerHTML = html; el._html = html; }
+    const at = prev ? prev.nextSibling : container.firstChild;
+    if (at !== el) container.insertBefore(el, at);       // moved only when the order really changed
+    prev = el;
+  });
+  have.forEach((el) => el.remove());
+}
+
+// One quiet, collapsed group ("Nearby (5)"); rows update in place on every scan.
 function renderFound() {
   const box = $('foundNet');
   let list = found.filter((f) => !isConnected(f));
@@ -280,20 +308,32 @@ function renderFound() {
   const known = classKnown();
   const total = list.length;
   if (known) {
-    list = [...list].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x)));          // ours first (stable)
+    list = [...list].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x)) || x.addr.localeCompare(y.addr));   // ours first, then a fixed order
     if (onlyOurs) list = list.filter((f) => isOurs(clsOf(f)));
   }
-  const sig = list.map((f) => f.addr + nameOf(f) + ((clsOf(f) || {}).class || '') + ((clsOf(f) || {}).device_class || '') + ((clsOf(f) || {}).last_seen || '')).join('|') + '|' + nearOpen + '|' + onlyOurs + '|' + known + '|' + total;
-  if (box.dataset.sig === sig) return;
-  box.dataset.sig = sig;
   nearPrev = total;
   if (!total) { box.innerHTML = ''; return; }
+  let head = box.querySelector(':scope > .sec.toggle'), rows = box.querySelector(':scope > .nbrows');
+  if (!head) {
+    box.innerHTML = '<div class="sec toggle" data-grp role="button"></div><div class="nbrows"></div>';
+    head = box.firstChild; rows = box.lastChild;
+  }
   const sw = known && nearOpen ? `<label class="sw ${onlyOurs ? 'on' : ''}" data-only title="Hide phones that are not ours">Only ours<i></i></label>` : '';
-  box.innerHTML = `<div class="sec toggle" data-grp role="button" aria-expanded="${nearOpen}">${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}</div>` +
-    (nearOpen ? (list.length ? list.map((f, i) => {
-      const c = clsOf(f), sn = serialFromName(f);
-      return `<div class="sitem in ${known && !isOurs(c) ? 'other' : ''}" data-addr="${esc(f.addr)}" style="animation-delay:${i * 35}ms"><span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><button class="cc-btn sm" data-go>Pair</button></div>`;
-    }).join('') : '<div class="sec" style="font-weight:400">None of these are ours.</div>') : '');
+  const headHtml = `${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}`;
+  if (head._html !== headHtml) { head.innerHTML = headHtml; head._html = headHtml; head.setAttribute('aria-expanded', nearOpen); }
+  const keyOfSvc = (f) => (f.name || f.addr).replace(/ \(\d+\)$/, '');
+  list = list.filter((f, i) => list.findIndex((g) => keyOfSvc(g) === keyOfSvc(f)) === i);    // one row per phone
+  const items = nearOpen ? (list.length ? list : [{ none: true }]) : [];
+  // Keyed by the phone (its mDNS name), not its address: an IP change updates the row, it doesn't replace it.
+  syncRows(rows, items, (f) => (f.none ? '-none-' : keyOfSvc(f)), (f) => {
+    if (f.none) return { cls: 'sec', html: 'None of these are ours.', attrs: { style: 'font-weight:400' } };
+    const c = clsOf(f), sn = serialFromName(f);
+    return {
+      cls: `sitem ${known && !isOurs(c) ? 'other' : ''}`.trim(),
+      attrs: { 'data-addr': f.addr },
+      html: `<span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><button class="cc-btn sm" data-go>Pair</button>`,
+    };
+  });
 }
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
@@ -315,14 +355,14 @@ const pairAutoOpened = new Set();   // already popped up once
 
 function renderPairing() {
   const box = $('pairNet');
-  const ordered = classKnown() ? [...pairScreens].sort((x, y) => isOurs(clsOf(y)) - isOurs(clsOf(x))) : pairScreens;
-  const sig = ordered.map((s) => s.addr + pairName(s) + ((clsOf(s) || {}).class || '') + ((clsOf(s) || {}).device_class || '')).join('|');
-  if (box.dataset.sig === sig) return;
-  box.dataset.sig = sig;
-  box.innerHTML = ordered.length ? `<div class="sec"><span class="livedot"></span>Pairing requests</div>` + ordered.map((s) => {
-    const sn = serialOfSvc(s);
-    return `<button class="sitem pair in" data-addr="${esc(s.addr)}"><span class="glyph" style="--g:#0a84ff">${ICON.phone}</span><span class="two"><b>${esc(pairName(s))}</b><small>${esc(s.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(clsOf(s))}</span><span class="go">Enter code</span></button>`;
-  }).join('') : '';
+  const ordered = [...pairScreens].sort((x, y) => (classKnown() ? isOurs(clsOf(y)) - isOurs(clsOf(x)) : 0) || x.addr.localeCompare(y.addr));
+  if (!ordered.length) { box.innerHTML = ''; return; }
+  if (!box.querySelector(':scope > .sec')) box.innerHTML = '<div class="sec"><span class="livedot"></span>Pairing requests</div><div class="nbrows"></div>';
+  syncRows(box.lastChild, ordered, (sv) => sv.addr, (sv) => {
+    const sn = serialOfSvc(sv);
+    return { cls: 'sitem pair', attrs: { 'data-addr': sv.addr, role: 'button' },
+      html: `<span class="glyph" style="--g:#0a84ff">${ICON.phone}</span><span class="two"><b>${esc(pairName(sv))}</b><small>${esc(sv.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(clsOf(sv))}</span><span class="go">Enter code</span>` };
+  });
 }
 $('pairNet').addEventListener('click', (e) => {
   const b = e.target.closest('[data-addr]');

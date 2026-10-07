@@ -19,6 +19,9 @@ struct State {
     probes: Mutex<HashMap<String, (Instant, Probe)>>,
     busy: Mutex<Vec<String>>,
     adb_version: Mutex<String>,
+    /// Phone (mDNS name without the "(2)" clash suffix) → the connect address it last answered on.
+    /// adb's list flips a phone between its real IP and another phone's; this keeps it steady.
+    confirmed: Mutex<HashMap<String, enroll_core::adb::MdnsService>>,
 }
 
 #[derive(Clone, Default)]
@@ -705,9 +708,43 @@ async fn adb_status(app: AppHandle, retry: bool) -> AdbInfo {
 
 #[tauri::command]
 async fn wifi_discover(app: AppHandle) -> Result<Vec<enroll_core::adb::MdnsService>, String> {
+    use enroll_core::adb::{base_name, tcp_probe, Tcp};
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<State>();
-        Ok(adb_of(&app, &st)?.quick().mdns_services())
+        let checked = adb_of(&app, &st)?.quick().mdns_services_checked();
+        let mut confirmed = st.confirmed.lock().unwrap().clone();
+        for (s, t) in &checked {
+            if s.kind == "connect" && *t == Tcp::Open {
+                confirmed.insert(base_name(&s.name).to_string(), s.clone());
+            }
+        }
+        let mut out: Vec<_> = checked.into_iter().map(|(s, _)| s).collect();
+        // A phone this scan lost (or listed under a wrong IP that was dropped) but that still answers
+        // where it was confirmed stays in the list. Pairing screens are never kept: a closed one must go.
+        let missing: Vec<_> = confirmed
+            .iter()
+            .filter(|(n, _)| !out.iter().any(|s| s.kind == "connect" && base_name(&s.name) == n.as_str()))
+            .map(|(n, s)| (n.clone(), s.clone()))
+            .collect();
+        let back: Vec<(String, Tcp, enroll_core::adb::MdnsService)> = std::thread::scope(|sc| {
+            let jobs: Vec<_> = missing.iter().map(|(n, s)| sc.spawn(move || (n.clone(), tcp_probe(&s.addr, 400), s.clone()))).collect();
+            jobs.into_iter().filter_map(|j| j.join().ok()).collect()
+        });
+        for (n, t, s) in back {
+            match t {
+                Tcp::Open => {
+                    out.retain(|o| !(o.kind == "connect" && base_name(&o.name) == n));
+                    out.push(s);
+                }
+                _ => {
+                    confirmed.remove(&n); // gone from where it was: forget it
+                }
+            }
+        }
+        // The list is shown as-is, so a steady order keeps rows from swapping places.
+        out.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.name.cmp(&b.name)));
+        *st.confirmed.lock().unwrap() = confirmed;
+        Ok(out)
     })
     .await
     .map_err(|e| e.to_string())?
