@@ -151,6 +151,41 @@ pub fn open_ports(host: &str, lo: u16, hi: u16, per_try: Duration, budget: Durat
     v
 }
 
+/// A phone can announce its pairing screen under an old address (seen live: pairing at
+/// 10.32.1.245, connect at 10.32.1.70, same phone, and only .70 answered). For each pairing service
+/// whose address does not answer, try the other addresses the same phone (same service name)
+/// announces, with the pairing port, and keep the first that answers.
+pub fn fix_pairing_hosts(svcs: &mut [MdnsService], is_open: impl Fn(&str) -> bool) {
+    let hosts_of = |name: &str, svcs: &[MdnsService]| -> Vec<String> {
+        let mut v: Vec<String> = svcs.iter().filter(|s| s.name == name).map(|s| host_of(&s.addr).to_string()).collect();
+        v.dedup();
+        v
+    };
+    for i in 0..svcs.len() {
+        if svcs[i].kind != "pairing" || is_open(&svcs[i].addr) {
+            continue;
+        }
+        let Some((host, port)) = svcs[i].addr.rsplit_once(':').map(|(h, p)| (h.to_string(), p.to_string())) else { continue };
+        for other in hosts_of(&svcs[i].name.clone(), svcs) {
+            if other == host {
+                continue;
+            }
+            let cand = format!("{other}:{port}");
+            if is_open(&cand) {
+                svcs[i].addr = cand;
+                break;
+            }
+        }
+    }
+}
+
+/// Answers a TCP connection within `ms` milliseconds.
+pub fn tcp_open(addr: &str, ms: u64) -> bool {
+    addr.to_socket_addrs().ok().and_then(|mut a| a.next())
+        .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(ms)).is_ok())
+        .unwrap_or(false)
+}
+
 /// The host part of `host:port`.
 pub fn host_of(addr: &str) -> &str {
     addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr)
@@ -201,7 +236,9 @@ impl Details {
 impl Adb {
     /// Phones on this network with Wireless debugging on (empty when mDNS is unavailable).
     pub fn mdns_services(&self) -> Vec<MdnsService> {
-        parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default())
+        let mut v = parse_mdns(&self.run(&["mdns", "services"]).unwrap_or_default());
+        fix_pairing_hosts(&mut v, |a| tcp_open(a, 400));
+        v
     }
 
     /// Forgets a device that is connected over the network (`adb disconnect`).
@@ -781,6 +818,33 @@ mod tests {
         assert!(found.contains(&port), "listening port {port} not found in {found:?}");
         assert!(found.len() <= 2, "closed ports must not be reported: {found:?}");
         assert!(open_ports("not a host name", 1000, 1010, Duration::from_millis(50), Duration::from_secs(1)).is_empty());
+    }
+
+    fn svc(name: &str, kind: &str, addr: &str) -> MdnsService {
+        MdnsService { name: name.into(), kind: kind.into(), addr: addr.into() }
+    }
+
+    #[test]
+    fn pairing_address_is_corrected_to_the_one_that_answers() {
+        // Exactly what the network showed: pairing under a stale IP, connect under the real one.
+        let mut v = vec![
+            svc("adb-93RAX0A0ZY-WjRxGk", "pairing", "10.32.1.245:43009"),
+            svc("adb-93RAX0A0ZY-WjRxGk", "connect", "10.32.1.70:42719"),
+            svc("adb-OTHER-xxxxxx", "connect", "10.32.1.99:40000"),
+        ];
+        fix_pairing_hosts(&mut v, |a| a == "10.32.1.70:43009" || a == "10.32.1.70:42719");
+        assert_eq!(v[0].addr, "10.32.1.70:43009");
+        assert_eq!(v[1].addr, "10.32.1.70:42719");           // connect services are never touched
+    }
+
+    #[test]
+    fn pairing_address_left_alone_when_it_answers_or_nothing_better() {
+        let mut ok = vec![svc("adb-A-111111", "pairing", "10.0.0.5:37000"), svc("adb-A-111111", "connect", "10.0.0.9:40000")];
+        fix_pairing_hosts(&mut ok, |a| a == "10.0.0.5:37000");
+        assert_eq!(ok[0].addr, "10.0.0.5:37000");             // it answers: keep it
+        let mut none = vec![svc("adb-B-222222", "pairing", "10.0.0.6:37000"), svc("adb-C-333333", "connect", "10.0.0.7:40000")];
+        fix_pairing_hosts(&mut none, |_| false);
+        assert_eq!(none[0].addr, "10.0.0.6:37000");           // another phone's address is never borrowed
     }
 
     #[test]
