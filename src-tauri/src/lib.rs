@@ -1,12 +1,13 @@
 use enroll_core::adb::{Adb, Details, Firmware, Owner};
 use enroll_core::api::{self, ApiError, Session};
-use enroll_core::enroll::enroll_device;
+use enroll_core::enroll::{enroll_device, Outcome};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 const KEYRING_SERVICE: &str = "com.aioapp.enroll";
 
@@ -25,9 +26,11 @@ struct Probe {
     details: Details,
     owner: Owner,
     accounts: usize,
+    users: usize,
     firmware: Option<Firmware>,
-    /// Version of our DPC agent when it is already Device Owner, else "".
+    /// Version of our DPC agent when it is already Device Owner, else "" / 0.
     dpc_version: String,
+    dpc_code: i64,
     /// The phone is on the list but answers nothing.
     unresponsive: bool,
 }
@@ -51,6 +54,11 @@ struct DeviceRow {
     /// Our DPC agent is already Device Owner (version below) — e.g. enrolled to another server before.
     dpc_owner: bool,
     dpc_version: String,
+    /// The installed agent's versionCode, to offer an update when the server hosts a newer one.
+    dpc_code: i64,
+    /// The MDM is hearing from it now (null: the server is too old to say), and where it is placed.
+    online: Option<bool>,
+    restaurant: String,
     /// Who enrolled it through the enroll app (display name), if the MDM knows.
     enrolled_by: String,
     server_status: String,
@@ -65,13 +73,19 @@ fn probe_device(q: &Adb, handle: &str) -> Probe {
         return Probe { details, unresponsive: true, ..Default::default() };
     }
     let owner = q.owner(handle);
-    let dpc_version = if owner.ours { q.package_version(handle, enroll_core::DPC_PKG) } else { String::new() };
+    let (dpc_version, dpc_code) = if owner.ours {
+        (q.package_version(handle, enroll_core::DPC_PKG), q.package_version_code(handle, enroll_core::DPC_PKG))
+    } else {
+        (String::new(), 0)
+    };
     Probe {
         owner,
         accounts: q.account_count(handle),
+        users: q.user_count(handle),
         firmware: q.firmware(handle),
         details,
         dpc_version,
+        dpc_code,
         unresponsive: false,
     }
 }
@@ -374,7 +388,8 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 serial: String::new(), android: String::new(), status: "offline".into(),
                 note: String::new(), class: String::new(), agent_version: String::new(),
                 firmware_version: String::new(), build: String::new(), server_seen: false,
-                dpc_owner: false, dpc_version: String::new(),
+                dpc_owner: false, dpc_version: String::new(), dpc_code: 0,
+                online: None, restaurant: String::new(),
                 enrolled_by: String::new(),
                 server_status: String::new(), last_seen: String::new(),
             };
@@ -406,13 +421,16 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                         row.status = "firmware".into();
                         row.firmware_version = fw.version.clone();
                         row.build = fw.build.clone();
-                    } else if let Some(why) = enroll_core::adb::blocked_reason(probe.accounts, &probe.owner) {
+                    } else if let Some(why) = enroll_core::adb::blocked_reason(probe.accounts, probe.users, &probe.owner) {
                         row.status = "blocked".into();
                         row.note = why;
                     } else {
                         row.status = "ready".into();
                         row.dpc_owner = probe.owner.ours;
+                    }
+                    if probe.owner.ours {
                         row.dpc_version = probe.dpc_version.clone();
+                        row.dpc_code = probe.dpc_code;
                     }
                 }
                 other => row.note = other.to_string(),
@@ -451,6 +469,8 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 r.class = s.class.clone();
                 r.agent_version = s.agent_version.clone();
                 r.enrolled_by = if s.enrolled_by_name.is_empty() { s.enrolled_by.clone() } else { s.enrolled_by_name.clone() };
+                r.online = s.online;
+                r.restaurant = s.restaurant.clone();
                 r.note.clear();
             }
         }
@@ -459,7 +479,8 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
 }
 
 #[tauri::command]
-async fn enroll(app: AppHandle, state: tauri::State<'_, State>, handle: String, class: String) -> Result<(), String> {
+async fn enroll(app: AppHandle, state: tauri::State<'_, State>, handle: String, class: String, restaurant_id: Option<String>) -> Result<Outcome, String> {
+    let restaurant_id = restaurant_id.unwrap_or_default();
     let adb = adb_of(&app, &state)?;
     let session = session_of(&state)?;
     {
@@ -477,13 +498,141 @@ async fn enroll(app: AppHandle, state: tauri::State<'_, State>, handle: String, 
         };
         // A stale cached APK from an earlier version must not be installed.
         let _ = std::fs::remove_file(&apk);
-        enroll_device(&adb, &session, &h2, &class, &apk, &mut log)
+        enroll_device(&adb, &session, &h2, &class, &restaurant_id, &apk, &mut log)
     })
     .await
     .map_err(|e| e.to_string());
     state.busy.lock().unwrap().retain(|h| h != &handle);
     state.probes.lock().unwrap().remove(&handle);
     res?
+}
+
+/// Restaurants for the "Goes to" picker.
+#[tauri::command]
+async fn restaurants(app: AppHandle, state: tauri::State<'_, State>) -> Result<Vec<api::Restaurant>, String> {
+    let session = session_of(&state)?;
+    tauri::async_runtime::spawn_blocking(move || session.restaurants())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| auth_failed(&app, &state, e))
+}
+
+/// The agent build the server hosts (null when none, or the server is older).
+#[tauri::command]
+async fn agent_info(state: tauri::State<'_, State>) -> Result<Option<api::AgentInfo>, String> {
+    let session = session_of(&state)?;
+    tauri::async_runtime::spawn_blocking(move || session.agent_info()).await.map_err(|e| e.to_string())
+}
+
+/// Live state of serials this app enrolled (the Today log's "Now" column).
+#[tauri::command]
+async fn serial_statuses(app: AppHandle, state: tauri::State<'_, State>, serials: Vec<String>) -> Result<HashMap<String, api::Status>, String> {
+    let session = session_of(&state)?;
+    tauri::async_runtime::spawn_blocking(move || session.statuses(&serials))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| auth_failed(&app, &state, e))
+}
+
+#[derive(Serialize)]
+struct Checks {
+    /// "name (type)" for each account on the phone.
+    accounts: Vec<String>,
+    users: usize,
+    /// Another app is Device Owner ("" when none, or when it is ours).
+    other_owner: String,
+}
+
+/// What stands between a blocked phone and enrolling; the UI re-asks every few seconds.
+#[tauri::command]
+async fn device_checks(app: AppHandle, handle: String) -> Result<Checks, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        let q = adb_of(&app, &st)?.quick();
+        let owner = q.owner(&handle);
+        let checks = Checks {
+            accounts: if owner.ours { Vec::new() } else { q.accounts(&handle) },
+            users: if owner.ours { 1 } else { q.user_count(&handle) },
+            other_owner: if owner.set && !owner.ours { owner.package } else { String::new() },
+        };
+        // The list re-reads this phone on its next poll, so it turns "ready" as soon as it is clean.
+        st.probes.lock().unwrap().remove(&handle);
+        Ok(checks)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn open_accounts(app: AppHandle, handle: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<State>();
+        Ok(adb_of(&app, &st)?.open_accounts(&handle))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Installs the server's current agent over the one on the device (keeps Device Owner and data).
+/// Returns the version now installed.
+#[tauri::command]
+async fn agent_update(app: AppHandle, state: tauri::State<'_, State>, handle: String) -> Result<String, String> {
+    let adb = adb_of(&app, &state)?;
+    let session = session_of(&state)?;
+    // Not marked busy: that would show the device as "enrolling". The UI disables the button instead.
+    let h2 = handle.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let apk = std::env::temp_dir().join("aio-mdm-dpc-update.apk");
+        let _ = std::fs::remove_file(&apk);
+        session.download_apk(&apk)?;
+        let out = adb.patient(180).run_on(&h2, &["install", "-r", apk.to_str().ok_or("bad APK path")?]).map_err(|e| format!("Update failed: {e}"))?;
+        if !out.contains("Success") {
+            return Err(format!("Update failed: {}", out.trim()));
+        }
+        Ok(adb.quick().package_version(&h2, enroll_core::DPC_PKG))
+    })
+    .await
+    .map_err(|e| e.to_string());
+    state.probes.lock().unwrap().remove(&handle);
+    res?
+}
+
+/// Opens the device's page on the dashboard in the default browser.
+#[tauri::command]
+fn open_dashboard(state: tauri::State<State>, serial: String) -> Result<(), String> {
+    let session = session_of(&state)?;
+    if serial.is_empty() || !serial.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
+        return Err("invalid serial".into());
+    }
+    open_url(&format!("{}/devices/{serial}", session.server))
+}
+
+fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let r = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", url]).spawn();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let r = std::process::Command::new("xdg-open").arg(url).spawn();
+    r.map(|_| ()).map_err(|e| format!("Could not open the browser: {e}"))
+}
+
+/// Writes the Today log as a CSV into Downloads; returns the path.
+#[tauri::command]
+fn save_csv(app: AppHandle, name: String, content: String) -> Result<String, String> {
+    if name.is_empty() || name.contains(['/', '\\']) || name.starts_with('.') || !name.ends_with(".csv") {
+        return Err("bad file name".into());
+    }
+    let dir = app.path().download_dir().or_else(|_| app.path().home_dir()).map_err(|e| e.to_string())?;
+    let path = dir.join(&name);
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// A desktop notification (the UI sends it when the window is in the background).
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) {
+    let _ = app.notification().builder().title(title).body(body).show();
 }
 
 #[derive(Serialize)]
@@ -680,8 +829,9 @@ fn adb_version(app: AppHandle, state: tauri::State<State>) -> Result<String, Str
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .manage(State::default())
-        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, device_unpair, profile, last_login])
+        .invoke_handler(tauri::generate_handler![me, sign_in, sign_in_saved, accounts, account_remove, sign_out, list_devices, enroll, adb_version, adb_status, wifi_discover, wifi_pair, wifi_pair_connect, classify_serials, wifi_connect, wifi_reset, device_forget, device_reprompt, device_to_wifi, device_unpair, profile, last_login, restaurants, agent_info, serial_statuses, device_checks, open_accounts, agent_update, notify, open_dashboard, save_csv])
         .run(tauri::generate_context!())
         .expect("error while running AIO Enroll");
 }

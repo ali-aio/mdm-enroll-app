@@ -118,5 +118,8 @@ const Guide = (() => {
     <div class="tcard"><b>Windows, phone still missing?</b><span>Install the phone maker’s USB driver (Samsung, Xiaomi, Huawei…).</span></div>
     <div class="tcard"><b>Linux, phone still missing?</b><span>Add your user to <span class="mono">plugdev</span> and install the udev rules, then log out and in.</span></div>`;
 
-  return { CAP, I, OSN, guideHTML, wire, adbCard, phone, loop, troubleHTML, sleep };
+  // Wireless debugging with the "Pair device with pairing code" row picked out: the screen to open.
+  const WD_PAIR = '<div class="phone"><div class="scr"><h6>Wireless debugging</h6><div class="li">Use wireless debugging<div class="tog on"></div></div><div class="li hl">Pair device with pairing code<span>›</span></div><div class="li">Pair device with QR code<span>›</span></div></div></div>';
+
+  return { CAP, I, OSN, guideHTML, wire, adbCard, phone, loop, troubleHTML, sleep, WD_PAIR };
 })();

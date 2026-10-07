@@ -32,6 +32,17 @@ pub struct Status {
     /// That account's display name ("First Last"), or the username when it has none.
     #[serde(default)]
     pub enrolled_by_name: String,
+    /// Checking in now (the server's own "online" window). `None` from a server too old to say.
+    #[serde(default)]
+    pub online: Option<bool>,
+    #[serde(default)]
+    pub battery_pct: i64,
+    /// false = mains powered (kiosk, KDS, POS…), so `battery_pct` means nothing.
+    #[serde(default)]
+    pub has_battery: bool,
+    /// The restaurant it is placed in ("" = onboarding inbox / bench).
+    #[serde(default)]
+    pub restaurant: String,
 }
 
 impl Status {
@@ -75,6 +86,26 @@ pub struct SerialClass {
 pub struct EnrollToken {
     pub token: String,
     pub server_url: String,
+}
+
+/// A place a device can be enrolled straight into (the "Goes to" picker).
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct Restaurant {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub address: String,
+    #[serde(default)]
+    pub device_count: i64,
+}
+
+/// The DPC agent build the server hosts.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AgentInfo {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub version_code: i64,
 }
 
 /// Why a call failed; `Unauthorized` means the stored session is dead and the app
@@ -217,14 +248,41 @@ impl Session {
         serde_json::from_value(v["serials"].clone()).map_err(|e| ApiError::Other(e.to_string()))
     }
 
-    pub fn enroll_token(&self, class: &str) -> Result<EnrollToken, ApiError> {
+    /// `restaurant_id` "" = no restaurant (the device waits in the onboarding inbox).
+    pub fn enroll_token(&self, class: &str, restaurant_id: &str) -> Result<EnrollToken, ApiError> {
+        let mut body = serde_json::json!({ "device_class": class });
+        if !restaurant_id.is_empty() {
+            body["restaurant_id"] = restaurant_id.into();
+        }
         agent()
             .post(&format!("{}/api/v1/app/enroll-token", self.server))
             .set("Authorization", &self.auth())
-            .send_json(serde_json::json!({ "device_class": class }))
+            .send_json(body)
             .map_err(map_err)?
             .into_json()
             .map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    pub fn restaurants(&self) -> Result<Vec<Restaurant>, ApiError> {
+        let v: serde_json::Value = agent()
+            .get(&format!("{}/api/v1/app/restaurants", self.server))
+            .set("Authorization", &self.auth())
+            .call()
+            .map_err(map_err)?
+            .into_json()
+            .map_err(|e| ApiError::Other(e.to_string()))?;
+        serde_json::from_value(v["restaurants"].clone()).map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    /// The agent build the server hosts; `None` when it hosts none (or the server is older).
+    pub fn agent_info(&self) -> Option<AgentInfo> {
+        agent()
+            .get(&format!("{}/api/v1/app/agent", self.server))
+            .set("Authorization", &self.auth())
+            .call()
+            .ok()?
+            .into_json()
+            .ok()
     }
 
     /// Downloads the agent APK (public on the server) to `dest`, via a temp file so a
@@ -262,7 +320,10 @@ mod tests {
         assert_eq!(old.enrolled_by_name, ""); // an older server sends no such field
         let auto: Status = serde_json::from_str(r#"{"enrolled":false,"status":"auto","class":"t7","last_seen_at":"2026-10-06T10:00:00Z"}"#).unwrap();
         assert!(auto.known() && !auto.enrolled);
+        let live: Status = serde_json::from_str(r#"{"enrolled":true,"status":"enrolled","online":true,"battery_pct":0,"has_battery":false,"restaurant":"Burger Hub"}"#).unwrap();
+        assert!(live.online == Some(true) && !live.has_battery && live.restaurant == "Burger Hub");
         let unseen: Status = serde_json::from_str(r#"{"enrolled":false}"#).unwrap();
+        assert!(unseen.online.is_none()); // older server: unknown, not "offline"
         assert!(!unseen.known());
         let gone: Status = serde_json::from_str(r#"{"enrolled":false,"status":"retired"}"#).unwrap();
         assert!(!gone.known());
@@ -282,6 +343,17 @@ mod tests {
         assert_eq!(m["DK19248T41099"].device_class, "kds");
         assert_eq!(m["DK19248T41099"].family_count, 3);
         assert_eq!(m["18121FDF60022T"], SerialClass { class: "other".into(), ..Default::default() });
+    }
+
+    #[test]
+    fn parses_restaurants_and_agent() {
+        let v: serde_json::Value = serde_json::from_str(r#"{"restaurants":[{"id":"6f1c","name":"Burger Hub · Gulberg","address":"Lahore","device_count":4},{"id":"77aa","name":"Chai Point"}]}"#).unwrap();
+        let r: Vec<Restaurant> = serde_json::from_value(v["restaurants"].clone()).unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].address, "Lahore");
+        assert_eq!(r[1].address, "");
+        let a: AgentInfo = serde_json::from_str(r#"{"version":"0.2.8","version_code":208,"url":"x","sha256":"y"}"#).unwrap();
+        assert_eq!((a.version.as_str(), a.version_code), ("0.2.8", 208));
     }
 
     #[test]

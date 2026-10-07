@@ -17,3 +17,4 @@ serde_json = "1"
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 enroll-core = { path = "../enroll-core" }
+tauri-plugin-notification = "2"

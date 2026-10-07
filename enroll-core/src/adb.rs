@@ -74,6 +74,39 @@ pub fn parse_version_name(dump: &str) -> String {
         .to_string()
 }
 
+/// `versionCode=208 minSdk=…` in `dumpsys package` → 208 (0 when not installed).
+pub fn parse_version_code(dump: &str) -> i64 {
+    dump.lines()
+        .find_map(|l| l.trim().strip_prefix("versionCode="))
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+/// The accounts in `dumpsys account`, as "name (type)", each listed once.
+pub fn parse_accounts(dump: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for l in dump.lines() {
+        let Some(rest) = l.trim().strip_prefix("Account {name=") else { continue };
+        let Some((name, rest)) = rest.split_once(", type=") else { continue };
+        let kind = rest.trim_end_matches('}').trim();
+        let label = match kind {
+            "com.google" => format!("{name} (Google)"),
+            "" => name.to_string(),
+            k => format!("{name} ({})", k.rsplit('.').next().unwrap_or(k)),
+        };
+        if !out.contains(&label) {
+            out.push(label);
+        }
+    }
+    out
+}
+
+/// Users on the phone from `pm list users` (`UserInfo{0:Owner:c13} running`).
+pub fn parse_user_count(out: &str) -> usize {
+    out.lines().filter(|l| l.trim_start().starts_with("UserInfo{")).count()
+}
+
 /// A phone found on the network by `adb mdns services`.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct MdnsService {
@@ -189,12 +222,15 @@ pub fn tcp_open(addr: &str, ms: u64) -> bool {
 /// Why a phone cannot be enrolled, or None. Accounts only matter BEFORE our agent is Device Owner
 /// (Android refuses to make an app Device Owner on a phone with accounts); once it is ours, accounts
 /// added later are fine and the phone can be re-enrolled or updated.
-pub fn blocked_reason(accounts: usize, owner: &Owner) -> Option<String> {
+pub fn blocked_reason(accounts: usize, users: usize, owner: &Owner) -> Option<String> {
     if owner.set && !owner.ours {
         return Some(format!("Owned by {} — factory reset", owner.package));
     }
     if accounts > 0 && !owner.ours {
         return Some("Has an account — factory reset, don't add an account".into());
+    }
+    if users > 1 && !owner.ours {
+        return Some("Has a second user — remove the work profile or guest user".into());
     }
     None
 }
@@ -647,6 +683,33 @@ impl Adb {
         let out = self.shell(handle, &["dumpsys", "account"]).unwrap_or_default();
         out.matches("Account {").count()
     }
+
+    pub fn package_version_code(&self, handle: &str, pkg: &str) -> i64 {
+        parse_version_code(&self.shell(handle, &["dumpsys", "package", pkg]).unwrap_or_default())
+    }
+
+    /// The accounts signed in on the phone, for the "what's in the way" checklist.
+    pub fn accounts(&self, handle: &str) -> Vec<String> {
+        parse_accounts(&self.shell(handle, &["dumpsys", "account"]).unwrap_or_default())
+    }
+
+    /// Android refuses a Device Owner while a second user (work profile, guest…) exists.
+    pub fn user_count(&self, handle: &str) -> usize {
+        parse_user_count(&self.shell(handle, &["pm", "list", "users"]).unwrap_or_default()).max(1)
+    }
+
+    /// Opens the phone's Accounts screen so the person can remove them; plain Settings when the
+    /// brand has no such screen. True when something opened.
+    pub fn open_accounts(&self, handle: &str) -> bool {
+        for action in ["android.settings.SYNC_SETTINGS", "android.settings.SETTINGS"] {
+            if let Ok(out) = self.shell(handle, &["am", "start", "-a", action]) {
+                if !out.contains("Error") && !out.contains("Exception") {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 pub fn parse_devices(out: &str) -> Vec<RawDevice> {
@@ -870,11 +933,13 @@ mod tests {
         let none = Owner::default();
         let ours = Owner { set: true, ours: true, package: "aio.app.mdmclient.dpc".into() };
         let theirs = Owner { set: true, ours: false, package: "com.other".into() };
-        assert!(blocked_reason(0, &none).is_none());                       // clean phone: ready
-        assert!(blocked_reason(3, &none).unwrap().contains("account"));    // accounts, nothing set up yet
-        assert!(blocked_reason(3, &ours).is_none());                       // Pixel 3a XL case: ours, accounts added later
-        assert!(blocked_reason(0, &theirs).unwrap().contains("com.other"));
-        assert!(blocked_reason(3, &theirs).unwrap().contains("com.other")); // another owner wins over accounts
+        assert!(blocked_reason(0, 1, &none).is_none());                       // clean phone: ready
+        assert!(blocked_reason(3, 1, &none).unwrap().contains("account"));    // accounts, nothing set up yet
+        assert!(blocked_reason(3, 1, &ours).is_none());                       // Pixel 3a XL case: ours, accounts added later
+        assert!(blocked_reason(0, 1, &theirs).unwrap().contains("com.other"));
+        assert!(blocked_reason(3, 1, &theirs).unwrap().contains("com.other")); // another owner wins over accounts
+        assert!(blocked_reason(0, 2, &none).unwrap().contains("second user"));  // work profile / guest
+        assert!(blocked_reason(0, 2, &ours).is_none());
     }
 
     #[test]
@@ -896,5 +961,16 @@ mod tests {
         assert!(valid_handle("A1B2C3"));
         assert!(!valid_handle("x; rm -rf /"));
         assert!(!valid_handle(""));
+    }
+
+    #[test]
+    fn accounts_users_and_version_code() {
+        let dump = "Accounts: 2\n    Account {name=ali@gmail.com, type=com.google}\n    Account {name=work@aioapp.com, type=com.microsoft.workaccount}\n\n  Active Sessions: 0\n    Account {name=ali@gmail.com, type=com.google}\n";
+        assert_eq!(parse_accounts(dump), vec!["ali@gmail.com (Google)", "work@aioapp.com (workaccount)"]);
+        assert!(parse_accounts("Accounts: 0\n").is_empty());
+        assert_eq!(parse_user_count("Users:\n\tUserInfo{0:Owner:c13} running\n\tUserInfo{10:Work profile:1030} running\n"), 2);
+        assert_eq!(parse_user_count("Users:\n\tUserInfo{0:Owner:c13} running\n"), 1);
+        assert_eq!(parse_version_code("    versionCode=208 minSdk=26 targetSdk=34\n    versionName=0.2.8\n"), 208);
+        assert_eq!(parse_version_code("Unable to find package"), 0);
     }
 }

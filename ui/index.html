@@ -33,14 +33,15 @@
   <aside class="side" aria-label="Devices">
     <div class="side-top" data-tauri-drag-region></div>
     <div class="side-scroll">
-      <div class="sec">Devices</div>
+      <label class="search" id="searchBox"><svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg><input id="q" placeholder="Search" spellcheck="false" autocomplete="off" aria-label="Search devices by name or serial"><span class="kbd" id="qKey"></span></label>
+      <div class="sec">Devices <span class="count" id="devCount"></span></div>
       <div class="rail" id="rail"></div>
+      <div id="todayNav"></div>
       <div id="pairNet"></div>
       <div id="foundNet"></div>
       <div id="saved"></div>
     </div>
     <div class="side-foot">
-      <button class="sitem addw" id="addWifi"><span class="glyph" style="--g:#0a84ff"><svg class="ic" viewBox="0 0 24 24"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01"/></svg></span><span class="nm">Add over Wi-Fi…</span></button>
       <div class="status"><span class="dot"></span><span id="foot">Watching for devices</span><span class="sp"></span><span id="today"></span></div>
     </div>
   </aside>
@@ -48,6 +49,11 @@
     <header class="toolbar" data-tauri-drag-region>
       <div class="tt" data-tauri-drag-region><div class="title" id="tbTitle">AIO Enroll</div><div class="sub" id="tbSub"></div></div>
       <span class="sp" data-tauri-drag-region></span>
+      <button class="cc-btn primary" id="batchBtn" hidden></button>
+      <div class="sitewrap" id="siteWrap" hidden>
+        <button class="tbpill" id="siteBtn" aria-haspopup="listbox" title="Where the devices you enrol go"></button>
+        <div class="pop2" id="sitePop" role="listbox" hidden><input id="siteQ" placeholder="Search restaurants" spellcheck="false" autocomplete="off"><div id="siteList"></div></div>
+      </div>
       <button class="tbtn helpbtn" id="helpBtn" aria-label="Help" title="Help"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/></svg></button>
       <div class="acctwrap">
         <button class="acct" id="acctBtn" aria-haspopup="menu" title="Account"><span class="pfp" id="pfp" aria-hidden="true"></span><span id="whoName" class="who"></span></button>
@@ -65,7 +71,7 @@
   </div>
   <div class="pm-back" id="confirm" hidden>
     <div class="pm-card cf" role="alertdialog" aria-modal="true" aria-labelledby="cfTitle">
-      <div class="pm-ic cf-ic"><svg class="ic" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1M4 4l16 16"/></svg></div>
+      <div class="pm-ic cf-ic" id="cfIc"><svg class="ic" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1M4 4l16 16"/></svg></div>
       <h2 id="cfTitle"></h2>
       <p class="pm-ask" id="cfBody"></p>
       <div class="pm-btns"><button class="cc-btn" id="cfNo">Cancel</button><button class="cc-btn primary danger" id="cfYes">Unpair</button></div>
@@ -94,6 +100,5 @@
   </div>
 </div>
 <script src="guide.js"></script>
-<script src="wifi.js"></script>
 <script src="app.js"></script>
 </body></html>

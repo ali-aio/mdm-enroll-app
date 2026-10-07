@@ -210,7 +210,7 @@ html[data-os="mac"] .side-top { height: 40px; }                          /* room
 .status { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); padding: 6px 8px 0; }
 .status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok-solid); animation: pulse 1.6s infinite; }
 .status.bad .dot { background: var(--warn-solid); animation: none; }
-.rail .none { font-size: 12px; color: var(--text-faint); padding: 4px 10px 6px; }
+.rail > .none { font-size: 12px; color: var(--text-faint); padding: 4px 10px 6px; }
 .status #today { font-variant-numeric: tabular-nums; }
 
 /* toolbar */
@@ -390,3 +390,111 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
   box-shadow: var(--shadow-pop); transform: translateX(120%); transition: transform .45s cubic-bezier(.2, 1.2, .3, 1); }
 .banner.show { transform: none; }
 .banner.bad { color: var(--danger); }
+
+/* ── search + shortcuts ─────────────────────────────────────────────────── */
+.search { display: flex; align-items: center; gap: 6px; margin: 2px 2px 2px; padding: 4px 8px; border-radius: 7px; background: var(--hover); color: var(--muted); font-size: 12.5px; }
+.search:focus-within { box-shadow: 0 0 0 3px var(--accent-soft); }
+.search .ic { width: 13px; height: 13px; flex: none; }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; color: var(--text); outline: none; padding: 0; }
+.search:focus-within .kbd { display: none; }
+.kbd { display: inline-block; font: 10.5px var(--font); padding: 0 5px; border-radius: 4px; box-shadow: inset 0 0 0 .5px var(--border), 0 1px 0 var(--border); color: var(--muted); background: var(--row); line-height: 16px; white-space: nowrap; }
+.cc-btn.primary .kbd { background: transparent; color: rgba(255, 255, 255, .85); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .5); }
+mark { background: color-mix(in srgb, var(--warn-solid) 40%, transparent); color: inherit; border-radius: 2px; }
+.sitem .two small mark { color: var(--text); }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; margin-top: 10px; }
+
+/* ── batch: progress ring in the list ───────────────────────────────────── */
+.ring { width: 16px; height: 16px; flex: none; display: block; }
+.ring circle { fill: none; stroke-width: 2.6; }
+.ring .bg { stroke: var(--press); }
+.ring .fg { stroke: var(--accent); stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset .5s var(--ease); }
+.sitem .two small.qstep { font-family: var(--font); }
+#batchBtn { white-space: nowrap; }
+.cflist { margin: 10px 0 0; padding: 0; list-style: none; text-align: left; border-radius: 10px; overflow: hidden; box-shadow: 0 0 0 .5px var(--sep); }
+.cflist li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--group); font-size: 12.5px; color: var(--text); }
+.cflist li + li { box-shadow: inset 0 .5px 0 var(--sep); }
+.cflist li span:last-child { margin-left: auto; color: var(--muted); }
+.cflist .glyph { width: 18px; height: 18px; border-radius: 5px; }
+.cflist .glyph .ic { width: 11px; height: 11px; }
+.cf-ic.plain { background: var(--accent-soft); color: var(--accent-text); }
+
+/* ── restaurant picker ──────────────────────────────────────────────────── */
+.sitewrap { position: relative; }
+.tbpill { display: inline-flex; align-items: center; gap: 7px; border: 0; font: inherit; font-size: 12px; background: var(--hover); color: var(--text); padding: 4px 9px 4px 8px; border-radius: 7px; cursor: default; white-space: nowrap; max-width: 230px; }
+.tbpill:hover { background: var(--press); }
+.tbpill span { overflow: hidden; text-overflow: ellipsis; }
+.tbpill .ic { width: 14px; height: 14px; color: var(--muted); flex: none; }
+.tbpill .car { width: 10px; height: 10px; }
+.tbpill.none span { color: var(--muted); }
+.pop2 { position: absolute; right: 0; top: 34px; z-index: 55; width: 300px; max-height: 360px; overflow: auto; padding: 6px; border-radius: 10px; background: color-mix(in srgb, var(--row) 94%, transparent); backdrop-filter: blur(24px) saturate(180%); -webkit-backdrop-filter: blur(24px) saturate(180%); box-shadow: var(--shadow-pop); animation: pop .16s var(--ease) both; transform-origin: top right; }
+.pop2 input { width: 100%; font: inherit; border: 0; border-radius: 7px; background: var(--hover); color: var(--text); padding: 6px 9px; outline: none; margin-bottom: 4px; }
+.pop2 .opt { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 12.5px; color: var(--text); text-align: left; cursor: default; }
+.pop2 .opt .ic { width: 13px; height: 13px; color: var(--muted); flex: none; }
+.pop2 .opt b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop2 .opt small { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.pop2 .opt.on, .pop2 .opt:hover, .pop2 .opt:focus-visible { background: var(--accent); color: #fff; outline: none; }
+.pop2 .opt.on .ic, .pop2 .opt:hover .ic, .pop2 .opt.on small, .pop2 .opt:hover small { color: rgba(255, 255, 255, .85); }
+.pop2 .psep { font-size: 10.5px; color: var(--muted); padding: 6px 8px 2px; font-weight: 600; }
+.pop2 .pnone { font-size: 12px; color: var(--muted); padding: 6px 8px; }
+
+/* ── live on the MDM ────────────────────────────────────────────────────── */
+.live { display: inline-flex; align-items: center; gap: 6px; }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok-solid); box-shadow: 0 0 0 3px var(--ok-bg); animation: pulse 1.6s infinite; }
+
+/* ── blocked phone checklist ────────────────────────────────────────────── */
+.fixrow .state { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 700; }
+.fixrow.ok .state { background: var(--ok-solid); color: #fff; }
+.fixrow.ok .state .check { width: 10px; height: 10px; stroke-width: 3.2; }
+.fixrow.bad .state { background: var(--danger-bg); color: var(--danger); }
+.fixrow .k { flex-direction: column; align-items: flex-start; gap: 1px; }
+.fixrow .k small { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+details.reset > summary { list-style: none; color: var(--link); font-size: 12.5px; cursor: default; padding: 2px 4px; border-radius: 5px; width: fit-content; }
+details.reset > summary::-webkit-details-marker { display: none; }
+details.reset > summary:hover { background: var(--hover); }
+details.reset[open] > summary { margin-bottom: 10px; }
+
+/* ── agent update ───────────────────────────────────────────────────────── */
+.upd { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.upbar { height: 4px; width: 80px; border-radius: 99px; background: var(--hover); overflow: hidden; position: relative; }
+.upbar i { position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 99px; background: var(--accent); animation: indet 1.1s ease-in-out infinite; }
+@keyframes indet { from { left: -40%; } to { left: 100%; } }
+.cc-btn .ic { width: 13px; height: 13px; }
+
+/* ── today's log ────────────────────────────────────────────────────────── */
+.tlist { width: 100%; border-collapse: collapse; font-size: 12.5px; background: var(--row); }
+.tlist th { text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); padding: 7px 10px; border-bottom: .5px solid var(--sep); white-space: nowrap; }
+.tlist td { padding: 7px 10px; border-bottom: .5px solid var(--sep); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; -webkit-user-select: text; user-select: text; }
+.tlist tr:last-child td { border-bottom: 0; }
+.tlist .dn { display: inline-flex; align-items: center; gap: 7px; }
+.tlist .glyph { width: 18px; height: 18px; border-radius: 5px; }
+.tlist .glyph .ic { width: 11px; height: 11px; }
+.tgrp { overflow: auto; }
+.thead { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.thead .sp { flex: 1; }
+.tempty { text-align: center; color: var(--muted); padding: 50px 20px; }
+.tempty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+.sitem .cnt { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.status #today { cursor: default; border-radius: 4px; padding: 0 3px; }
+.status #today:hover { background: var(--hover); color: var(--text); }
+
+/* ── empty page: two ways in (cable, or the phone's pairing screen) ─────── */
+.ehead { text-align: center; margin: 6px 0 18px; animation: fadeUp .3s var(--ease) both; }
+.ehead h2 { font-size: 20px; }
+.ehead p { color: var(--muted); margin: 3px 0 0; }
+.ways { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; max-width: 720px; margin: 0 auto; }
+.way { background: var(--group); border-radius: 12px; box-shadow: 0 0 0 .5px var(--sep); padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 8px; transition: box-shadow .3s, background .3s; animation: fadeUp .35s var(--ease) both; }
+.way + .way { animation-delay: .06s; }
+html[data-theme="dark"] .way { background: var(--row); }
+.way.hot { box-shadow: 0 0 0 2px var(--accent-edge); background: var(--accent-soft); }
+.way h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.way h3 .glyph { width: 24px; height: 24px; }
+.way ol { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
+.way ol li { margin-bottom: 3px; }
+.way ol b { font-weight: 600; }
+.way .ph-mini { display: flex; justify-content: center; height: 228px; overflow: hidden; }
+.way .ph-mini .phone { transform: scale(.74); transform-origin: top center; }
+.listen { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--muted); margin-top: auto; }
+.listen .livedot { background: var(--ok-solid); }
+.addhint { font-size: 11.5px; color: var(--text-faint); padding: 6px 10px 2px; line-height: 1.4; }
+.addhint b { font-weight: 500; color: var(--muted); }
+@media (max-width: 900px) { .ways { grid-template-columns: 1fr; max-width: 420px; } }

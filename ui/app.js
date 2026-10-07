@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 
 const CLASSES = ['dongle', 'pos', 'kds', 'kiosk'];
 const STEPS = ['Checking the device', 'Getting a token', 'Installing the agent', 'Setting Device Owner',
-  'Granting permissions', 'Starting the agent', 'Waiting for the server'];
+  'Granting permissions', 'Starting the agent', 'Registering with the MDM', 'First check-in'];
 const svg = (inner) => `<svg class="ic" viewBox="0 0 24 24">${inner}</svg>`;
 const ICON = {
   phone: svg('<rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/>'),
@@ -21,6 +21,13 @@ const ICON = {
   cloud: svg('<path d="M7 18a4 4 0 0 1-.6-7.9A6 6 0 0 1 18 9.5 4.3 4.3 0 0 1 17.5 18z"/>'),
   check: svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
   help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.6 2.4c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>'),
+  store: svg('<path d="M4 9l1.5-5h13L20 9M4 9v11h16V9M4 9h16M9 20v-6h6v6"/>'),
+  down: svg('<path d="M6 9l6 6 6-6"/>'),
+  ext: svg('<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>'),
+  clock: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+  copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
+  up: svg('<path d="M12 19V5M6 11l6-6 6 6"/>'),
+  stack: svg('<path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5"/>'),
 };
 const PHONE = ICON.phone;
 const CHECK = '<svg class="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
@@ -70,6 +77,15 @@ document.addEventListener('keydown', (e) => {
   applyZoom();
 });
 applyZoom();
+const IS_MAC = document.documentElement.dataset.os === 'mac';
+const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const rel = (ts) => {
+  const t = typeof ts === 'number' ? ts : Date.parse(ts || '');
+  if (!t) return '';
+  const s = (Date.now() - t) / 1000;
+  return s < 45 ? 'just now' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : new Date(t).toLocaleDateString();
+};
 
 let devices = [];       // one entry per phone (connections merged)
 let rawDevices = [];    // one entry per adb connection
@@ -77,14 +93,19 @@ let selected = null;           // handle
 let timer = null, polling = false;
 const picked = {};             // handle -> class chosen
 const run = {};                // handle -> { step, error, done }  (this session's enroll attempts)
-let todayCount = 0;
 let heroKey = '';
 let adb = { found: true, os: 'linux', version: '' };   // from adb_status
 let guideOs = null;            // OS tab shown in the adb help (defaults to this computer)
 let emptySince = 0, tipShown = false;
 let heroTok = {};
 let fixOpen = false, fixFor = '';
-let wifiMode = false, wifiPrefill = '';
+let todayMode = false;                 // the "Enrolled today" page is showing
+let query = '';                        // the sidebar search
+let batch = null;                      // { handles, done, ok, follow } while "Enrol all" runs
+let agentLatest = null;                // the agent build the server hosts ({version, version_code})
+let restaurantsList = [];              // for the "Goes to" picker ([] = none, or an older server)
+let site = { id: '', name: '' };       // where enrolled devices go ('' = the onboarding inbox)
+let siteRecent = [];
 let savedPhones = [];
 try { savedPhones = JSON.parse(store.get('saved', '[]')); } catch {}
 const saveSaved = () => store.set('saved', JSON.stringify(savedPhones.slice(0, 8)));
@@ -212,6 +233,7 @@ async function discover() {
     renderPairing();
     autoPairPopup();
     renderFound();
+    if (!devices.length && !todayMode) renderHero();
   } catch {} finally { discBusy = false; }
 }
 // A phone is already connected if any connection has the same address, the same discovery name, or
@@ -335,7 +357,7 @@ function pairSucceeded(handle) {
   unignore(String(handle).split(':')[0]);
   setTimeout(() => {
     $('pmCode').hidden = false; $('pmGo').hidden = false; $('pmCancel').hidden = false;
-    closePairModal(); selected = handle; wifiMode = false; heroKey = ''; tick();
+    closePairModal(); selected = handle; todayMode = false; heroKey = ''; tick();
   }, 1100);
 }
 $('pmGo').addEventListener('click', async () => {
@@ -394,12 +416,11 @@ function autoPairPopup() {
     $('pmCode').disabled = true; $('pmGo').disabled = true;
     return;
   }
-  if (!$('pairModal').hidden || wifiMode) return;
+  if (!$('pairModal').hidden) return;
   const fresh = pairScreens.find((s) => !pairAutoOpened.has(s.addr) && !pairDismissed.has(s.addr));
   if (fresh) { pairAutoOpened.add(fresh.addr); openPairModal(fresh); }
 }
 
-function openPair() { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); }
 
 function renderSaved() {
   const box = $('saved');
@@ -432,53 +453,87 @@ $('saved').addEventListener('click', async (e) => {
     openPairFor(host, p.name || 'Phone', p.serial || '', null);
   }
 });
-$('addWifi').addEventListener('click', () => { wifiMode = true; wifiPrefill = ''; heroKey = ''; refresh(); });
+
+// Search: a device matches on its name, serial or adb address.
+const matches = (d) => { const q = query.trim().toLowerCase(); return !q || [d.name, d.serial, d.handle].some((x) => String(x || '').toLowerCase().includes(q)); };
+const visibleDevices = () => devices.filter(matches);
+const hl = (text) => {
+  const q = query.trim(), t = String(text || '');
+  const i = q ? t.toLowerCase().indexOf(q.toLowerCase()) : -1;
+  return i < 0 ? esc(t) : esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + q.length)) + '</mark>' + esc(t.slice(i + q.length));
+};
+// Enrol progress for the list: 0..1 while queued or enrolling, null otherwise.
+const progressOf = (d) => {
+  const r = run[d.handle];
+  if (r?.queued) return 0;
+  if (d.status === 'enrolling') return Math.min(1, (r?.step ?? 0) / STEPS.length);
+  return null;
+};
+const RING = (p) => `<svg class="ring" viewBox="0 0 16 16"><circle class="bg" cx="8" cy="8" r="6.3"/><circle class="fg" cx="8" cy="8" r="6.3" stroke-dasharray="39.6" stroke-dashoffset="${(39.6 * (1 - p)).toFixed(1)}"/></svg>`;
 
 function renderRail() {
-  $('addWifi').classList.toggle('on', wifiMode);
   renderFound();
   renderSaved();
+  renderTodayNav();
   const rail = $('rail');
   let selEl = rail.querySelector('.rsel');
   if (!selEl) { selEl = document.createElement('div'); selEl.className = 'rsel'; rail.prepend(selEl); }
   const have = new Map([...rail.querySelectorAll('.sitem[data-h]')].map((el) => [el.dataset.h, el]));
-  devices.forEach((d, i) => {
+  const shown = visibleDevices();
+  $('devCount').textContent = query.trim() ? `${shown.length} of ${devices.length}` : devices.length ? String(devices.length) : '';
+  shown.forEach((d, i) => {
     let el = have.get(d.handle);
     if (!el) {
       el = document.createElement('button');
       el.className = 'sitem in';
       el.dataset.h = d.handle;
-      el.addEventListener('click', () => { selected = d.handle; wifiMode = false; refresh(); });
+      el.addEventListener('click', () => { selected = d.handle; todayMode = false; if (batch) batch.follow = false; refresh(); });
     }
     have.delete(d.handle);
-    el.classList.toggle('on', d.handle === selected && !wifiMode);
+    el.classList.toggle('on', d.handle === selected && !todayMode);
     // Enrolled, or firmware the MDM has registered: a green tick instead of the status dot.
     const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
+    const p = progressOf(d), q = query.trim();
+    const r = run[d.handle];
+    const qline = r?.queued ? 'Waiting…' : d.status === 'enrolling' ? (STEPS[r?.step ?? 0] || 'Enrolling') + '…' : '';
     // Only redraw when something visible changed, so the tick animates once, not on every poll.
-    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d), glyphOf(d)].join('|');
+    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d), glyphOf(d), p, qline, q].join('|');
     if (el.dataset.sig !== sig) {
       el.dataset.sig = sig;
       el.title = `${d.name || 'Unknown device'} · ${stateLine(d)} · ${connLabel(d)}`;
-      el.innerHTML = `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span><span class="nm">${esc(d.name || 'Unknown device')}</span><span class="conn">${connIcons(d)}</span><span class="stat">${
-        ticked ? `<span class="tick">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
+      const label = q || qline
+        ? `<span class="two"><b>${hl(d.name || 'Unknown device')}</b><small class="${qline ? 'qstep' : ''}">${qline ? esc(qline) : hl(d.serial || d.handle)}</small></span>`
+        : `<span class="nm">${esc(d.name || 'Unknown device')}</span>`;
+      el.innerHTML = `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span>${label}<span class="conn">${connIcons(d)}</span><span class="stat">${
+        p !== null ? RING(p) : ticked ? `<span class="tick">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
     }
     const want = rail.children[i + 1];      // +1: the selection highlight is the first child
     if (want !== el) rail.insertBefore(el, want || null);
   });
   have.forEach((el) => el.remove());
   let none = rail.querySelector('.none');
-  if (!devices.length && !none) { none = document.createElement('div'); none.className = 'none'; none.textContent = 'None connected'; rail.appendChild(none); }
-  else if (devices.length && none) none.remove();
+  const noneText = devices.length ? 'No match' : 'None connected';
+  if (!shown.length) {
+    if (!none) { none = document.createElement('div'); none.className = 'none'; rail.appendChild(none); }
+    none.textContent = noneText;
+  } else if (none) none.remove();
+  let hint = rail.querySelector('.addhint');
+  if (devices.length && !query.trim()) {
+    if (!hint) { hint = document.createElement('div'); hint.className = 'addhint'; hint.innerHTML = 'To add another: <b>plug it in</b>, or open <b>Pair device with pairing code</b> on it.'; }
+    rail.appendChild(hint);
+  } else if (hint) hint.remove();
   // The selection glides to the selected row instead of jumping.
   const on = rail.querySelector('.sitem.on');
   if (on) { selEl.style.transform = `translateY(${on.offsetTop}px)`; selEl.style.height = on.offsetHeight + 'px'; selEl.style.opacity = 1; }
   else selEl.style.opacity = 0;
+  renderBatchBtn();
 }
 
 const stepRow = (s, i, step) => `<div class="row steprow ${i < step ? 'done' : i === step ? 'now' : 'todo'}" data-i="${i}"><span class="k">${s}</span><span class="state">${i < step ? CHECK : i === step ? '<span class="spin"></span>' : ''}</span></div>`;
 
 function setStep(handle, step) {
-  const rows = [...document.querySelectorAll('#hero .steprow')];
+  // Several devices can be enrolling (Enrol all): only the one on screen moves its rows.
+  const rows = selected === handle ? [...document.querySelectorAll('#hero .steprow')] : [];
   rows.forEach((r, i) => {
     const want = i < step ? 'done' : i === step ? 'now' : 'todo';
     if (r.classList.contains(want)) return;                      // only touch rows that changed
@@ -505,8 +560,9 @@ function restartFade(el) { el.classList.remove('fade'); void el.offsetWidth; el.
 const heroKeyFor = (d) => {
   const r = d && run[d.handle];
   return !adb.found ? 'adb|' + (guideOs || adb.os)
-    : wifiMode ? 'wifi'
-    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name, d.firmware_version || '', d.agent_version || '', d.dpc_owner ? 'o' + d.dpc_version : ''].join('|') : 'empty';
+    : todayMode ? 'today'
+    : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', r?.queued ? 'q' : '', r?.out ? 'o' + r.out.live : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name,
+      d.firmware_version || '', d.agent_version || '', d.dpc_owner ? 'o' : '', d.dpc_version || '', d.dpc_code || 0, d.online ? 'on' : '', d.restaurant || '', site.id, restaurantsList.length ? 'R' : '', agentLatest?.version_code || 0, batch ? 'B' : ''].join('|') : 'empty|' + (pairScreens.length ? 'p' : '');
 };
 
 function renderHero() {
@@ -528,38 +584,25 @@ function renderHero() {
     Guide.wire(hero, redraw);
     return;
   }
-  hero.classList.toggle('wifi', wifiMode);
-  if (wifiMode) {
-    setBar('Add over Wi-Fi', 'Pair a phone with its 6-digit code');
-    hero.innerHTML = '<div class="wh">Add a phone over Wi-Fi</div><div class="wsub">Android 11 or newer. USB is still the most reliable way.</div><div class="wbody"></div>';
-    Wifi.draw(hero.querySelector('.wbody'), {
-      invoke, esc, Guide, alive, devices: () => devices,
-      nameForHost: (host) => (savedPhones.find((p) => p.host === host) || {}).name || '',
-      onConnected: (addr) => {
-        const host = String(addr).split(':')[0];
-        unignore(host);
-        if (String(addr).includes(':') && !savedPhones.some((p) => p.host === host)) { savedPhones.unshift({ host, name: '' }); saveSaved(); }
-        setTimeout(() => { wifiMode = false; selected = addr; heroKey = ''; tick(); }, 1600);
-      },
-    });
-    wifiPrefill = '';
-    return;
-  }
+  if (todayMode) return renderToday(alive);
   if (!d) {
+    // Two ways in, side by side. Nothing to click: a cable or a pairing screen is picked up by itself.
     setBar('AIO Enroll', 'No devices connected');
-    hero.innerHTML = `<div class="split"><div class="chk">
-      <div class="ct">Let’s connect your first device</div>
-      <div class="cs2">Three quick things. The first ticks itself.</div>
-      <div class="cs ok" data-i="0"><div class="n">${CHECK}</div><div><b>Computer is ready</b><span>adb found${adb.version ? ' · ' + esc(adb.version.replace(/^Android Debug Bridge version /, '')) : ''}</span></div></div>
-      <div class="cs" data-i="1"><div class="n">2</div><div><b>Turn on USB debugging</b><span>Tap Build number 7 times, then switch on USB debugging.</span></div></div>
-      <div class="cs" data-i="2"><div class="n">3</div><div><b>Plug in and tap Allow</b><span>Use a data cable. The phone asks once: tap Allow.</span></div></div>
-      </div><div class="pcol"><div class="ph-slot"></div><div class="cap"></div></div></div><div class="tipslot"></div>`;
-    const cs = [...hero.querySelectorAll('.cs')], slot = hero.querySelector('.ph-slot'), cap = hero.querySelector('.cap');
-    Guide.loop(slot, alive, (sc) => {
-      cap.textContent = Guide.CAP[sc];
-      cs[1].classList.toggle('on', sc !== 'allow');
-      cs[2].classList.toggle('on', sc === 'allow');
-    });
+    const seen = pairScreens.length > 0;
+    hero.innerHTML = `<div class="ehead"><h2>Connect a device</h2><p>Either way, it shows up on the left by itself.</p></div>
+      <div class="ways">
+        <div class="way"><h3><span class="glyph" style="--g:#8e8e93">${ICON.usb}</span>With a cable</h3>
+          <ol><li>Turn on <b>USB debugging</b> (Build number ×7 → Developer options).</li><li>Plug in and tap <b>Allow</b>.</li></ol>
+          <div class="ph-mini"><div class="ph-slot" id="phUsb"></div></div>
+          <div class="listen"><span class="livedot"></span>Watching USB · adb ${esc((adb.version || '').replace(/^Android Debug Bridge version /, ''))}</div></div>
+        <div class="way ${seen ? 'hot' : ''}"><h3><span class="glyph" style="--g:#0a84ff">${ICON.wifi}</span>Over Wi-Fi</h3>
+          <ol><li>Same Wi-Fi as this computer.</li><li>Developer options → <b>Wireless debugging</b> → <b>Pair device with pairing code</b>.</li><li>Type the code when it pops up here.</li></ol>
+          <div class="ph-mini"><div class="ph-slot" id="phWifi"></div></div>
+          <div class="listen"><span class="livedot"></span>${seen ? 'Pairing screen found' : 'Watching for pairing screens'}</div></div>
+      </div><div class="tipslot"></div>`;
+    Guide.loop($('phUsb'), alive);
+    if (seen) Guide.phone($('phWifi'), 'pair', alive);
+    else $('phWifi').innerHTML = Guide.WD_PAIR;
     tipShown = false;
     return;
   }
@@ -570,7 +613,8 @@ function renderHero() {
   const group = (title, rows, foot = '') => `<div class="ghead">${title}</div><div class="group">${rows.filter(Boolean).join('')}</div>${foot ? `<div class="gfoot">${foot}</div>` : ''}`;
   const pill = (cls, html, tip = '') => `<span class="pill ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
   const justDone = d.status === 'enrolled' && r?.done;
-  const hdr = `<div class="dhdr"><div class="dicon ${justDone ? 'done' : ''}" style="--g:${glyphOf(d)}">${justDone ? CHECK : iconOf(d)}</div><div><h1>${esc(d.name || 'Unknown device')}</h1><p>${esc(sub)}${d.android ? ' · Android ' + esc(d.android) : ''}</p></div></div>`;
+  const placedAt = d.status === 'enrolled' ? d.restaurant || r?.out?.restaurant || '' : '';
+  const hdr = `<div class="dhdr"><div class="dicon ${justDone ? 'done' : ''}" style="--g:${glyphOf(d)}">${justDone ? CHECK : iconOf(d)}</div><div><h1>${esc(d.name || 'Unknown device')}</h1><p>${esc(sub)}${placedAt ? ' · ' + esc(placedAt) : d.android ? ' · Android ' + esc(d.android) : ''}</p></div></div>`;
   const deviceG = group('Device', [row('Model', esc(d.name || '—')), row('Serial number', `<span class="mono">${esc(d.serial || d.handle)}</span>`), d.android ? row('Android', esc(d.android)) : '']);
   const wifiAddr = d.wifiHandle ? (d.wifiHandle.includes(':') ? d.wifiHandle : 'Wireless debugging') : '';
   const canSwitch = !isNet(d) && !d.wifiHandle && ['ready', 'enrolled', 'firmware', 'blocked'].includes(d.status);
@@ -581,30 +625,53 @@ function renderHero() {
   ], d.hasUsb && d.wifiHandle ? 'It’s safe to unplug the cable — the phone stays connected over Wi-Fi.' : '');
 
   let enrolG = '', extra = '', acts = '';
-  if (d.status === 'ready') {
+  const goesTo = site.id ? `<b style="color:var(--text);font-weight:500">${esc(site.name)}</b>` : 'Onboarding inbox';
+  const agentV = d.dpc_version || d.agent_version || '';
+  const behind = !!(agentLatest && d.dpc_code && agentLatest.version_code > d.dpc_code);
+  const agentRow = (suffix = '') => agentV || behind ? row('Agent', esc(agentV + suffix),
+    behind ? `<button class="cc-btn sm primary" data-update title="Installs it over USB/Wi-Fi now; keeps Device Owner and settings">${ICON.up} Update to ${esc(agentLatest.version)}</button>`
+      : agentLatest && d.dpc_code ? pill('ok', 'Up to date') : '') : '';
+  if (d.status === 'ready' && r?.queued) {
+    enrolG = group('Enrollment', [row('Status', '', pill('warn', 'Waiting in the queue')), row('Used as', esc(classOf(d.handle))), row('Goes to', goesTo)],
+      'It starts as soon as the devices ahead of it finish.');
+  } else if (d.status === 'ready') {
     const cls = classOf(d.handle);
     const ours = d.dpc_owner;
     enrolG = group('Enrollment', [
       row('Status', '', ours ? pill('warn', 'Not registered with this MDM') : pill('warn', 'Not enrolled')),
-      ours ? row('AIO agent', `${esc(d.dpc_version || 'installed')} · Device Owner`) : '',
+      ours ? agentRow(' · Device Owner') : '',
       row('Used as', '', `<div class="seg" id="seg"><span class="th"></span>${CLASSES.map((c) => `<button data-c="${c}" class="${c === cls ? 'on' : ''}">${c}</button>`).join('')}</div>`),
+      restaurantsList.length ? row('Goes to', goesTo, `<button class="lnk" data-site>Change</button>`) : '',
       row('Enrolled by', esc($('whoName').textContent || 'You')),
     ], ours ? 'Our agent already manages this phone, but this MDM has no record of it — it was probably enrolled to another server, or removed here. Re-enrolling registers it here and updates the agent; nothing is reset.'
-      : 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
-    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go">${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'}</button></div>`;
+      : site.id ? 'It skips the onboarding inbox and shows up in this restaurant right away.' : 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
+    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go" ${batch ? 'disabled' : ''}>${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'} <span class="kbd">${MOD}↩</span></button></div>`;
   } else if (d.status === 'enrolling') {
     enrolG = group('Enrolling', STEPS.map((s, i) => stepRow(s, i, r?.step ?? 0)));
   } else if (d.status === 'enrolled') {
+    const out = r?.out;
+    const placed = d.restaurant || out?.restaurant || '';
     enrolG = group('Enrollment', [
       row('Status', '', pill('ok' + (justDone ? ' pop' : ''), ICON.check + ' Enrolled')),
       row('Used as', esc(d.class || '—')),
-      d.agent_version ? row('Agent', esc(d.agent_version)) : '',
+      row('Restaurant', placed ? esc(placed) : 'Onboarding inbox'),
+      agentRow(),
       d.enrolled_by ? row('Enrolled by', esc(d.enrolled_by)) : '',
     ]);
+    const online = d.online || out?.live;
+    const battery = out ? (out.has_battery ? out.battery_pct + '%' : 'Mains powered') : '';
+    // An older server says nothing about check-ins: show nothing rather than a wrong "Offline".
+    const knows = d.online !== null && d.online !== undefined || out?.checked;
+    extra = !knows ? '' : group('On the MDM', [
+      row('Status', '', online ? `<span class="pill ok${justDone ? ' pop' : ''}"><span class="live"><i></i>Online</span></span>` : pill('warn', out ? 'Not heard from yet' : 'Offline')),
+      out ? row('First check-in', out.live ? rel(r.at) : 'Not yet') : '',
+      battery ? row('Battery', esc(battery)) : '',
+    ], online ? '' : out ? 'It is enrolled but hasn’t checked in yet. Make sure it has internet; it turns Online here when it does.'
+      : 'Not checking in right now. It may be switched off or offline.');
     const nxt = devices.find((x) => x.status === 'ready' && x.handle !== d.handle);
-    acts = nxt ? `<div class="dacts"><button class="cc-btn primary lg" id="next">Next: ${esc(nxt.name || 'device')}</button></div>` : '';
+    acts = `<div class="dacts">${d.serial ? `<button class="cc-btn" data-dash>${ICON.ext} Open on Dashboard</button>` : ''}${nxt && !batch ? `<button class="cc-btn primary lg" id="next">Next: ${esc(nxt.name || 'device')}</button>` : ''}</div>`;
     if (justDone) finishBar();
-    if (r) r.done = false;
+    if (r) r.done = false;          // animate once; the page itself stays
   } else if (d.status === 'firmware') {
     const gone = d.server_status === 'retired' || d.server_status === 'wiped';
     const mdm = d.server_seen ? pill('ok', ICON.check + ' Registered') : gone ? pill('bad', esc(d.server_status)) : pill('warn', 'Not registered yet');
@@ -615,11 +682,17 @@ function renderHero() {
       d.build ? row('Build', `<span class="mono">${esc(d.build)}</span>`) : '', row('MDM', '', mdm), d.server_seen && d.class ? row('Used as', esc(d.class)) : ''], foot);
   } else if (d.status === 'blocked') {
     const why = String(d.note || 'Blocked').split(' — ')[0];
-    const isAccount = /account/i.test(d.note || '');
-    enrolG = group('Enrollment', [row('Status', '', pill('bad', 'Can’t be enrolled')), row('Reason', esc(why))],
-      'Android only lets an app become Device Owner on a phone with no accounts.');
+    const isAccount = /account/i.test(d.note || ''), isOwner = /owned by/i.test(d.note || ''), isUser = /user/i.test(d.note || '');
+    // Filled in by pollChecks a moment later; this is the first guess from the list's own reading.
+    const fix = (id, state, title, sub, btn = '') => `<div class="row fixrow ${state}" id="${id}"><span class="state">${state === 'ok' ? CHECK : '!'}</span><span class="k"><span>${title}</span><small>${sub}</small></span>${btn}</div>`;
+    enrolG = group('Before it can be enrolled', [
+      fix('fxAcc', isAccount ? 'bad' : 'ok', 'Remove the accounts on the phone', isAccount ? 'Checking…' : 'None', isAccount ? '<button class="cc-btn sm" data-accounts>Open Accounts on Phone</button>' : ''),
+      fix('fxOwn', isOwner ? 'bad' : 'ok', 'No other device admin', isOwner ? esc(why) : 'Nothing else manages this phone'),
+      fix('fxUsr', isUser ? 'bad' : 'ok', 'Single user', isUser ? 'Has a work profile or guest user' : 'No work profile or guest user'),
+    ], '<span class="waitmsg" id="fxWait"><span class="spin"></span>Checking again every few seconds…</span>');
     const steps = ['Factory reset the phone.', ...(isAccount ? ['Don’t sign in to Google during setup.'] : []), 'Turn on USB debugging and plug it in again.'];
-    extra = group('How to fix', steps.map((s, i) => `<div class="row howto"><span class="n">${i + 1}</span><span class="k">${s}</span></div>`));
+    extra = `<details class="reset" ${isOwner ? 'open' : ''}><summary>${isOwner ? 'How to fix' : 'Can’t remove them? Factory reset instead…'}</summary>${group('Factory reset', steps.map((s, i) => `<div class="row howto"><span class="n">${i + 1}</span><span class="k">${s}</span></div>`), 'Android only lets an app become Device Owner on a phone with no accounts and one user.')}</details>`;
+    acts = `<div class="dacts"><button class="cc-btn primary lg" disabled>Enrol</button></div>`;
   } else if (d.status === 'unauthorized') {
     enrolG = group('Connection', [row('Status', '', pill('warn', 'Waiting for Allow'))],
       'Look at the phone and tap Allow on “Allow USB debugging?”. Tick “Always allow from this computer”.');
@@ -633,7 +706,31 @@ function renderHero() {
   restartFade(hero);
   if (d.status === 'unauthorized') Guide.phone(hero.querySelector('.ph-slot'), 'allow', alive);
   if (d.status === 'enrolling') setStep(d.handle, r?.step ?? 0);
+  if (d.status === 'blocked') pollChecks(d.handle, alive);
   placeThumb(false);
+}
+
+// The blocked checklist re-reads the phone every few seconds, so each item ticks off as it is fixed.
+// Once it is clean the device list sees it as ready and the page turns into the Enrol page.
+async function pollChecks(handle, alive) {
+  while (alive()) {
+    try {
+      const c = await invoke('device_checks', { handle });
+      if (!alive()) return;
+      const set = (id, ok, sub) => {
+        const el = $(id); if (!el) return;
+        el.classList.toggle('ok', ok); el.classList.toggle('bad', !ok);
+        el.querySelector('.state').innerHTML = ok ? CHECK : '!';
+        el.querySelector('small').innerHTML = sub;
+        const b = el.querySelector('[data-accounts]'); if (b && ok) b.remove();
+      };
+      set('fxAcc', !c.accounts.length, c.accounts.length ? `${c.accounts.length} left: ${c.accounts.map(esc).join(', ')}` : 'All removed');
+      set('fxOwn', !c.other_owner, c.other_owner ? `Owned by ${esc(c.other_owner)}: only a factory reset removes it` : 'Nothing else manages this phone');
+      set('fxUsr', c.users <= 1, c.users > 1 ? `${c.users} users: remove the work profile or guest user` : 'No work profile or guest user');
+      if (!c.accounts.length && !c.other_owner && c.users <= 1) $('fxWait').innerHTML = '<span class="spin"></span>All clear. Getting it ready…';
+    } catch {}
+    await sleep(3000);
+  }
 }
 
 document.addEventListener('click', (e) => {
@@ -650,9 +747,12 @@ function alertBanner(text, bad) {
   requestAnimationFrame(() => b.classList.add('show'));
   clearTimeout(alertBanner.t); alertBanner.t = setTimeout(() => b.classList.remove('show'), 6000);
 }
-function confirmSheet(title, bodyHTML, yesLabel) {
+const CF_ICON = $('cfIc').innerHTML;      // the unlink icon of the destructive (Unpair) sheet
+function confirmSheet(title, bodyHTML, yesLabel, { danger = true, icon = '' } = {}) {
   return new Promise((resolve) => {
     $('cfTitle').textContent = title; $('cfBody').innerHTML = bodyHTML; $('cfYes').textContent = yesLabel;
+    $('cfYes').classList.toggle('danger', danger);
+    $('cfIc').classList.toggle('plain', !danger); $('cfIc').innerHTML = icon || CF_ICON;
     $('confirm').hidden = false; setTimeout(() => $('cfNo').focus(), 30);
     const done = (v) => { $('confirm').hidden = true; document.removeEventListener('keydown', key); resolve(v); };
     const key = (e) => { if (e.key === 'Escape') done(false); };
@@ -743,6 +843,33 @@ $('hero').addEventListener('click', async (e) => {
     act.disabled = false; act.innerHTML = label;
     return tick();
   }
+  if (e.target.closest('[data-site]')) { e.stopPropagation(); return openSitePop(); }
+  if (e.target.closest('[data-dash]')) {
+    try { await invoke('open_dashboard', { serial: d.serial }); } catch (err) { alertBanner(String(err), true); }
+    return;
+  }
+  const acc = e.target.closest('[data-accounts]');
+  if (acc) {
+    acc.disabled = true; acc.innerHTML = '<span class="spin"></span> Opening…';
+    let ok = false;
+    try { ok = await invoke('open_accounts', { handle: d.handle }); } catch {}
+    acc.disabled = false; acc.textContent = ok ? 'Opened on Phone ✓' : 'Open Accounts on Phone';
+    if (!ok) alertBanner('Couldn’t open the Accounts screen. On the phone: Settings → Accounts (or Passwords & accounts).', true);
+    return;
+  }
+  const upd = e.target.closest('[data-update]');
+  if (upd) {
+    const msg = hero_amsg();
+    upd.outerHTML = '<span class="upd" id="updBusy"><span class="upbar"><i></i></span>Updating…</span>';
+    try {
+      const v = await invoke('agent_update', { handle: d.handle });
+      alertBanner(`${d.name || 'Device'}: agent updated to ${v || agentLatest?.version || 'the latest'}.`);
+    } catch (err) {
+      if (msg) msg.innerHTML = `<div class="wmsg bad">${esc(err)}</div>`;
+      $('updBusy')?.remove();
+    }
+    heroKey = ''; return tick();
+  }
   const chip = e.target.closest('[data-c]');
   if (chip) {
     picked[d.handle] = chip.dataset.c;
@@ -758,35 +885,260 @@ $('hero').addEventListener('click', async (e) => {
     return refresh();
   }
   const go = e.target.closest('#go');
-  if (!go) return;
+  if (!go || go.disabled || batch) return;
   go.classList.add('press');
+  const ok = await runEnroll(d);
+  if (ok) tellDone([d.handle]);
+});
+
+// Enrols one device; shared by the Enrol button and "Enrol all". True when it worked.
+async function runEnroll(d) {
+  const cls = classOf(d.handle), dest = { ...site };
   run[d.handle] = { step: 0 };
   d.status = 'enrolling';
   refresh();
+  let ok = false;
   try {
-    await invoke('enroll', { handle: d.handle, class: classOf(d.handle) });
-    run[d.handle] = { step: 7, done: true };
-    todayCount++; store.set('today', JSON.stringify({ day: new Date().toDateString(), n: todayCount }));
-    showToday();
+    const out = await invoke('enroll', { handle: d.handle, class: cls, restaurantId: dest.id || null });
+    run[d.handle] = { step: STEPS.length, done: true, out, at: Date.now() };
+    logEnrolled({ name: d.name || 'Device', serial: out.serial || d.serial || '', cls, restaurant: out.restaurant || dest.name || '', live: out.live });
+    ok = true;
   } catch (err) {
     run[d.handle] = { error: String(err) };
     $('pbar').style.width = '0';
   }
   heroKey = '';
   tick();
-});
+  return ok;
+}
+
+// A desktop notification when the window is in the background, so long installs can be left alone.
+function tellDone(handles) {
+  if (document.hasFocus()) return;
+  const done = handles.map((h) => ({ d: devices.find((x) => x.handle === h), r: run[h] })).filter((x) => x.r?.out);
+  if (!done.length) return;
+  const one = done[0], dest = one.r.out.restaurant;
+  const title = done.length > 1 ? `${done.length} devices enrolled` : `${one.d?.name || 'Device'} is ${one.r.out.live ? 'live' : 'enrolled'}`;
+  const body = done.length > 1 ? done.map((x) => x.d?.name || 'Device').join(', ') : `Enrolled as ${classOf(one.d?.handle || '')}${dest ? ' · ' + dest : ''}`;
+  invoke('notify', { title, body }).catch(() => {});
+}
 
 listen('enroll-step', (e) => {
   const { handle, step } = e.payload;
   run[handle] = { ...(run[handle] || {}), step };
   setStep(handle, step);
+  renderRail();
 });
 
-function showToday() { $('today').textContent = todayCount ? `${todayCount} today` : ''; }
-try {
-  const t = JSON.parse(store.get('today', 'null'));
-  if (t && t.day === new Date().toDateString()) todayCount = t.n;
-} catch {}
+// ---- Today's log: what this computer enrolled, kept for a week ----
+let hist = [];
+try { hist = JSON.parse(store.get('hist', '[]')); } catch {}
+const dayOf = (t) => new Date(t).toDateString();
+const todays = () => hist.filter((h) => dayOf(h.t) === new Date().toDateString());
+function logEnrolled(e) {
+  const week = Date.now() - 7 * 86400e3;
+  hist = [{ t: Date.now(), by: $('whoName').textContent || currentUser, ...e }, ...hist.filter((h) => h.t > week && !(h.serial && h.serial === e.serial && dayOf(h.t) === dayOf(Date.now())))].slice(0, 500);
+  store.set('hist', JSON.stringify(hist));
+  showToday();
+}
+function showToday() {
+  const n = todays().length;
+  $('today').textContent = n ? `${n} today` : '';
+  $('today').title = n ? 'Show what was enrolled today' : '';
+  renderTodayNav();
+}
+function renderTodayNav() {
+  const n = todays().length, box = $('todayNav');
+  const sig = n + '|' + todayMode;
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = n ? `<div class="sec">Today</div><button class="sitem ${todayMode ? 'on' : ''}" id="todayItem" style="${todayMode ? 'background:var(--sel);color:var(--accent-text)' : ''}"><span class="glyph" style="--g:#34c759">${ICON.clock}</span><span class="nm">Enrolled today</span><span class="cnt">${n}</span></button>` : '';
+}
+const openToday = () => { if (!todays().length) return; todayMode = true; heroKey = ''; refresh(); };
+$('todayNav').addEventListener('click', (e) => { if (e.target.closest('#todayItem')) openToday(); });
+$('today').addEventListener('click', openToday);
+
+let todayLive = {};      // serial -> status from the MDM, refreshed while the page is open
+function renderToday(alive) {
+  const list = todays();
+  setBar('Enrolled today', `${list.length} device${list.length === 1 ? '' : 's'} · ${$('whoName').textContent || currentUser}`);
+  const hero = $('hero');
+  const draw = () => {
+    if (!list.length) { hero.innerHTML = '<div class="tempty"><b>Nothing enrolled yet today</b>Devices you enrol show up here.</div>'; return; }
+    const now = (h) => {
+      const st = todayLive[h.serial];
+      if (!st) return '<span class="pill">…</span>';
+      return st.online ? '<span class="pill ok"><span class="live"><i></i>Online</span></span>' : st.enrolled ? '<span class="pill warn">Not heard from</span>' : `<span class="pill bad">${esc(st.status || 'Unknown')}</span>`;
+    };
+    const where = (h) => { const st = todayLive[h.serial]; return esc((st && st.enrolled ? st.restaurant : h.restaurant) || 'Onboarding inbox'); };
+    hero.innerHTML = `<div class="dwrap" style="max-width:820px"><div class="thead"><span class="sp"></span><button class="cc-btn" data-copy>${ICON.copy} Copy Serials</button><button class="cc-btn" data-csv>Export CSV</button></div>
+      <div class="group tgrp"><table class="tlist"><tr><th>Time</th><th>Device</th><th>Serial</th><th>Used as</th><th>Restaurant</th><th>Now</th></tr>${list.map((h) => `<tr>
+        <td class="mono">${new Date(h.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+        <td><span class="dn"><span class="glyph" style="--g:${GLYPH[h.cls] || '#8e8e93'}">${ICON[h.cls] || ICON.phone}</span>${esc(h.name)}</span></td>
+        <td class="mono">${esc(h.serial)}</td><td>${esc(h.cls)}</td><td>${where(h)}</td><td>${now(h)}</td></tr>`).join('')}</table></div>
+      <div class="gfoot" style="margin-top:8px">Kept on this computer. The dashboard’s “Enrolled by” filter shows everything you enrolled anywhere.</div></div>`;
+  };
+  draw();
+  restartFade(hero);
+  (async () => {
+    while (alive()) {
+      const serials = [...new Set(list.map((h) => h.serial).filter(Boolean))].slice(0, 100);
+      if (serials.length) {
+        try { todayLive = await invoke('serial_statuses', { serials }); if (alive()) draw(); } catch {}
+      }
+      await sleep(10000);
+    }
+  })();
+}
+const csvCell = (v) => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g, '""') + '"' : String(v);
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch {}
+  const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch {}
+  ta.remove(); return ok;
+}
+$('hero').addEventListener('click', async (e) => {
+  if (!todayMode) return;
+  const list = todays();
+  if (e.target.closest('[data-copy]')) {
+    const ok = await copyText(list.map((h) => h.serial).filter(Boolean).join('\n'));
+    alertBanner(ok ? `Copied ${list.length} serial${list.length === 1 ? '' : 's'}.` : 'Couldn’t copy to the clipboard.', !ok);
+  }
+  if (e.target.closest('[data-csv]')) {
+    const rows = [['time', 'device', 'serial', 'class', 'restaurant', 'enrolled_by', 'online_now']].concat(list.map((h) => {
+      const st = todayLive[h.serial] || {};
+      return [new Date(h.t).toISOString(), h.name, h.serial, h.cls, (st.enrolled ? st.restaurant : h.restaurant) || '', h.by || '', st.online ? 'yes' : 'no'];
+    }));
+    const name = `aio-enrolled-${new Date().toISOString().slice(0, 10)}.csv`;
+    try { alertBanner('Saved to ' + await invoke('save_csv', { name, content: rows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n' })); }
+    catch (err) { alertBanner(String(err), true); }
+  }
+});
+
+// ---- Enrol all: every ready device, one after another ----
+const readyForBatch = () => devices.filter((d) => d.status === 'ready' && !run[d.handle]?.queued);
+function renderBatchBtn() {
+  const b = $('batchBtn'), n = readyForBatch().length;
+  if (batch) {
+    b.hidden = false; b.disabled = true;
+    b.innerHTML = `<span class="spin"></span> Enrolling ${Math.min(batch.done + 1, batch.handles.length)} of ${batch.handles.length}`;
+  } else {
+    b.hidden = n < 2; b.disabled = false;
+    b.innerHTML = `${ICON.stack} Enrol ${n} Ready`;
+  }
+}
+$('batchBtn').addEventListener('click', async () => {
+  if (batch) return;
+  const list = readyForBatch();
+  if (list.length < 2) return;
+  const items = list.map((d) => `<li><span class="glyph" style="--g:${GLYPH[classOf(d.handle)] || '#8e8e93'}">${ICON[classOf(d.handle)] || ICON.phone}</span>${esc(d.name || 'Device')}<span>${esc(classOf(d.handle))}</span></li>`).join('');
+  const ok = await confirmSheet(`Enrol ${list.length} devices?`,
+    `Each one is enrolled as the class shown${site.id ? ` and goes to <b>${esc(site.name)}</b>` : ''}. To change a class, cancel and pick it on that device’s page.<ul class="cflist">${items}</ul>`,
+    `Enrol ${list.length}`, { danger: false, icon: ICON.stack });
+  if (!ok) return;
+  batch = { handles: list.map((d) => d.handle), done: 0, ok: 0, follow: true };
+  list.forEach((d) => { run[d.handle] = { queued: true }; });
+  todayMode = false; heroKey = ''; refresh();
+  for (const h of batch.handles) {
+    const d = devices.find((x) => x.handle === h);
+    if (d && d.status === 'ready') {
+      delete run[h].queued;
+      if (batch.follow) { selected = h; heroKey = ''; }
+      if (await runEnroll(d)) batch.ok++;
+    } else delete run[h];
+    batch.done++;
+    renderBatchBtn();
+  }
+  const done = batch.handles, okN = batch.ok;
+  batch = null; heroKey = ''; refresh();
+  alertBanner(okN === done.length ? `All ${okN} devices enrolled.` : `${okN} of ${done.length} enrolled. Open the others to see what went wrong.`, okN !== done.length);
+  tellDone(done);
+});
+
+// ---- Where enrolled devices go: one restaurant for the session, picked in the toolbar ----
+function loadSite() {
+  try { site = JSON.parse(store.get('site:' + currentUser, 'null')) || { id: '', name: '' }; } catch { site = { id: '', name: '' }; }
+  try { siteRecent = JSON.parse(store.get('siteRecent:' + currentUser, '[]')); } catch { siteRecent = []; }
+}
+function setSite(s) {
+  site = s && s.id ? { id: s.id, name: s.name } : { id: '', name: '' };
+  store.set('site:' + currentUser, JSON.stringify(site));
+  if (site.id) { siteRecent = [site, ...siteRecent.filter((x) => x.id !== site.id)].slice(0, 3); store.set('siteRecent:' + currentUser, JSON.stringify(siteRecent)); }
+  renderSiteBtn(); heroKey = ''; renderHero();
+}
+function renderSiteBtn() {
+  $('siteWrap').hidden = !restaurantsList.length;
+  const b = $('siteBtn');
+  b.classList.toggle('none', !site.id);
+  b.innerHTML = `${ICON.store}<span>${esc(site.id ? site.name : 'No restaurant')}</span>${ICON.down.replace('class="ic"', 'class="ic car"')}`;
+}
+async function loadRestaurants() {
+  try { restaurantsList = await invoke('restaurants'); } catch { restaurantsList = []; }
+  // A restaurant that was deleted (or renamed) since it was picked.
+  if (site.id) { const r = restaurantsList.find((x) => x.id === site.id); if (!r && restaurantsList.length) setSite(null); else if (r && r.name !== site.name) setSite(r); }
+  renderSiteBtn(); heroKey = ''; renderHero();
+}
+function drawSiteList() {
+  const q = $('siteQ').value.trim().toLowerCase();
+  const hit = (r) => !q || r.name.toLowerCase().includes(q) || (r.address || '').toLowerCase().includes(q);
+  const opt = (r) => `<button class="opt ${site.id === r.id ? 'on' : ''}" data-sid="${esc(r.id)}" role="option">${ICON.store}<b>${esc(r.name)}</b><small>${esc(r.address || (r.device_count ? r.device_count + ' devices' : ''))}</small></button>`;
+  const recent = q ? [] : siteRecent.map((x) => restaurantsList.find((r) => r.id === x.id)).filter(Boolean);
+  const all = restaurantsList.filter(hit).filter((r) => !recent.includes(r));
+  $('siteList').innerHTML = (recent.length ? '<div class="psep">RECENT</div>' + recent.map(opt).join('') : '') +
+    (all.length ? (recent.length ? '<div class="psep">ALL</div>' : '') + all.map(opt).join('') : q ? '<div class="pnone">No restaurant matches</div>' : '') +
+    (q ? '' : `<div class="psep"></div><button class="opt ${site.id ? '' : 'on'}" data-sid="" role="option"><b>Onboarding inbox</b><small>decide later</small></button>`);
+}
+function openSitePop() {
+  if (!restaurantsList.length) return;
+  const pop = $('sitePop');
+  if (!pop.hidden) { pop.hidden = true; return; }
+  $('siteQ').value = ''; drawSiteList(); pop.hidden = false;
+  setTimeout(() => $('siteQ').focus(), 30);
+  loadRestaurants().then(() => { if (!pop.hidden) drawSiteList(); });
+}
+$('siteBtn').addEventListener('click', (e) => { e.stopPropagation(); openSitePop(); });
+$('siteQ').addEventListener('input', drawSiteList);
+$('siteQ').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { $('sitePop').hidden = true; e.stopPropagation(); }
+  if (e.key === 'Enter') $('siteList').querySelector('.opt')?.click();
+});
+$('sitePop').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const o = e.target.closest('[data-sid]'); if (!o) return;
+  setSite(o.dataset.sid ? restaurantsList.find((r) => r.id === o.dataset.sid) : null);
+  $('sitePop').hidden = true;
+});
+document.addEventListener('click', (e) => { if (!e.target.closest('.sitewrap')) $('sitePop').hidden = true; });
+
+// ---- Search + keyboard ----
+$('qKey').textContent = MOD + 'F';
+$('q').addEventListener('input', () => {
+  query = $('q').value;
+  const shown = visibleDevices();
+  if (shown.length && !shown.some((d) => d.handle === selected)) { selected = shown[0].handle; todayMode = false; }
+  refresh();
+});
+$('q').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { $('q').value = ''; query = ''; $('q').blur(); refresh(); e.stopPropagation(); }
+  if (e.key === 'Enter') { const f = visibleDevices()[0]; if (f) { selected = f.handle; todayMode = false; refresh(); } $('q').blur(); }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveSel(e.key === 'ArrowDown' ? 1 : -1); }
+});
+function moveSel(dir) {
+  const list = visibleDevices(); if (!list.length) return;
+  const i = list.findIndex((d) => d.handle === selected);
+  const n = list[i < 0 ? 0 : Math.max(0, Math.min(list.length - 1, i + dir))];
+  selected = n.handle; todayMode = false; if (batch) batch.follow = false; refresh();
+}
+const sheetOpen = () => !$('pairModal').hidden || !$('confirm').hidden;
+document.addEventListener('keydown', (e) => {
+  if ($('app').hidden || sheetOpen()) return;
+  const mod = e.metaKey || e.ctrlKey, k = e.key.toLowerCase();
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  if (mod && k === 'f') { e.preventDefault(); $('q').focus(); $('q').select(); return; }
+  if (mod && e.key === 'Enter') { e.preventDefault(); const g = $('go'); if (g && !g.disabled) g.click(); return; }
+  if (mod && e.shiftKey && k === 'w') { e.preventDefault(); document.querySelector('#hero [data-towifi]')?.click(); return; }
+  if (!typing && !mod && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); moveSel(e.key === 'ArrowDown' ? 1 : -1); }
+});
 
 let pollSince = 0;
 async function tick() {
@@ -847,7 +1199,12 @@ function drawTab() {
   document.querySelectorAll('#drawer .dt button').forEach((b) => b.classList.toggle('on', b.dataset.t === helpTab));
   if (helpTab === 'phone') {
     body.innerHTML = `<div class="pcol"><div class="ph-slot"></div><div class="cap"></div></div>
-      <ol><li>Settings → About phone → tap <b>Build number</b> 7 times.</li><li>Settings → Developer options → <b>USB debugging</b> on.</li><li>Plug in, tap <b>Allow</b>.</li></ol>`;
+      <ol><li>Settings → About phone → tap <b>Build number</b> 7 times.</li><li>Settings → Developer options → <b>USB debugging</b> on.</li><li>Plug in, tap <b>Allow</b>.</li></ol>
+      <div class="tcard" style="margin-top:16px"><b>Keyboard</b><div class="keys">
+        <span class="kbd">${MOD}F</span><span>Search by name or serial</span>
+        <span class="kbd">↑ ↓</span><span>Move through the devices</span>
+        <span class="kbd">${MOD}↩</span><span>Enrol the selected device</span>
+        <span class="kbd">${MOD}${IS_MAC ? '⇧' : 'Shift+'}W</span><span>Switch it to Wi-Fi</span></div></div>`;
     const cap = body.querySelector('.cap');
     Guide.loop(body.querySelector('.ph-slot'), alive, (sc) => { cap.textContent = Guide.CAP[sc]; });
   } else if (helpTab === 'pc') {
@@ -880,6 +1237,10 @@ function goApp(me) {
   showScreen('app');
   $('pfp').className = 'pfp sk'; $('pfp').textContent = '';
   renderSkeleton();
+  todayMode = false; query = ''; $('q').value = ''; batch = null;
+  loadSite(); renderSiteBtn();
+  loadRestaurants();
+  invoke('agent_info').then((a) => { agentLatest = a && a.version_code ? a : null; heroKey = ''; renderHero(); }).catch(() => {});
   showToday(); heroKey = ''; clearInterval(timer);
   tick(); timer = setInterval(tick, 2500);
   clearInterval(discTimer); discover(); discTimer = setInterval(discover, 2500);

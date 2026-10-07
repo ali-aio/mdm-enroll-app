@@ -6,12 +6,13 @@
   const handlers = {};
   const emit = (ev, payload) => (handlers[ev] || []).forEach((f) => f({ payload }));
   const row = (o) => Object.assign({ adb_state: 'device', name: '', serial: '', android: '', status: 'ready', note: '', class: '', agent_version: '',
-    firmware_version: '', build: '', server_seen: false, dpc_owner: false, dpc_version: '', enrolled_by: '', server_status: '', last_seen: '' }, o);
+    firmware_version: '', build: '', server_seen: false, dpc_owner: false, dpc_version: '', dpc_code: 0, online: false, restaurant: '', enrolled_by: '', server_status: '', last_seen: '' }, o);
   const DEVICES = S === 'empty' || S === 'noadb' ? [] : [
     row({ handle: '18121FDF60022T', name: 'Google Pixel 6', serial: '18121FDF60022T', android: '17' }),
     row({ handle: '10.32.2.210:5555', name: 'Google Pixel 6', serial: '18121FDF60022T', android: '17' }),
     row({ handle: '10.32.0.113:43213', name: 'AIO T7', serial: 'AT070AA2600030', android: '15', status: 'firmware', firmware_version: '1.8.8', build: 'v2.1.025-aio-glance-22', server_seen: true, class: 't7', server_status: 'auto' }),
-    row({ handle: 'adb-DK19256F40580-Ab12Cd._adb-tls-connect._tcp', name: 'SUNMI D2s_KDS_STGL', serial: 'DK19256F40580', android: '11', status: 'enrolled', class: 'kds', agent_version: '0.2.8', enrolled_by: 'Shahrukh Bashir' }),
+    row({ handle: 'adb-DK19256F40580-Ab12Cd._adb-tls-connect._tcp', name: 'SUNMI D2s_KDS_STGL', serial: 'DK19256F40580', android: '11', status: 'enrolled', class: 'kds', agent_version: '0.2.4', dpc_version: '0.2.4', dpc_code: 204, online: true, restaurant: 'Burger Hub · Gulberg', enrolled_by: 'Shahrukh Bashir' }),
+    row({ handle: 'P3121C30418', name: 'SUNMI D3 Pro', serial: 'P3121C30418', android: '11' }),
     row({ handle: '10.32.1.70:42719', name: 'Google Pixel 3a XL', serial: '93RAX0A0ZY', android: '12', status: 'ready', dpc_owner: true, dpc_version: '0.2.4' }),
     row({ handle: 'ADRB0AAMY00187', name: 'Google HK1 RBOX D8', serial: 'ADRB0AAMY00187', android: '11', status: 'blocked', note: 'Has an account — factory reset, don’t add an account' }),
   ];
@@ -20,6 +21,12 @@
     { name: 'adb-AT070AABU00875-Qq11Ww', kind: 'connect', addr: '10.32.2.167:41001' },
     { name: 'adb-R95Y405MG3X-XGrWQf', kind: 'connect', addr: '10.32.1.211:44793' },
   ].concat(S === 'pair' ? [{ name: 'adb-AT070AA2600031-Zz99Yy', kind: 'pairing', addr: '10.32.0.120:37971' }] : []);
+  const RESTAURANTS = [
+    { id: 'r1', name: 'Burger Hub · Gulberg', address: 'Main Blvd, Lahore', device_count: 12 },
+    { id: 'r2', name: 'Burger Hub · DHA Ph 6', address: 'Lahore', device_count: 9 },
+    { id: 'r3', name: 'Chai Point · F-7', address: 'Islamabad', device_count: 4 },
+    { id: 'r4', name: 'Pizza Lab · Clifton', address: 'Karachi', device_count: 7 },
+  ];
   const CLASS = {
     DP02256HJ0342: { class: 'other' }, R95Y405MG3X: { class: 'other' },
     AT070AABU00875: { class: 'production', production: 'T7 batch BU', model: '07' },
@@ -36,7 +43,26 @@
     list_devices: () => DEVICES,
     wifi_discover: () => DISC,
     classify_serials: ({ serials }) => Object.fromEntries(serials.map((s) => [s, CLASS[s] || { class: 'other' }])),
-    enroll: async ({ handle }) => { for (let i = 0; i < 7; i++) { emit('enroll-step', { handle, step: i, line: '' }); await new Promise((r) => setTimeout(r, 400)); } },
+    enroll: async ({ handle, class: cls, restaurantId }) => {
+      for (let i = 0; i < 8; i++) { emit('enroll-step', { handle, step: i, line: '' }); await new Promise((r) => setTimeout(r, +(window.__mockStepMs || 400))); }
+      const rest = (RESTAURANTS.find((r) => r.id === restaurantId) || {}).name || '';
+      const d = DEVICES.find((x) => x.handle === handle) || {};
+      DEVICES.filter((x) => x.serial && x.serial === d.serial).forEach((x) => Object.assign(x, { status: 'enrolled', class: cls, online: true, restaurant: rest, agent_version: '0.2.8', dpc_version: '0.2.8', dpc_code: 208, enrolled_by: 'Ali Hassan' }));
+      return { live: true, checked: true, serial: d.serial, restaurant: rest, battery_pct: 0, has_battery: false, agent_version: '0.2.8' };
+    },
+    restaurants: () => RESTAURANTS,
+    agent_info: () => ({ version: '0.2.8', version_code: 208 }),
+    serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
+    device_checks: ({ handle }) => {
+      const left = Math.max(0, 2 - (window.__checks = (window.__checks || 0) + (window.__accountsOpened ? 1 : 0)));
+      if (!left) DEVICES.filter((x) => x.handle === handle).forEach((x) => Object.assign(x, { status: 'ready', note: '' }));
+      return { accounts: ['ali@gmail.com (Google)', 'work@aioapp.com (workaccount)'].slice(0, left), users: 1, other_owner: '' };
+    },
+    open_accounts: () => { window.__accountsOpened = true; return true; },
+    agent_update: async ({ handle }) => { await new Promise((r) => setTimeout(r, 1500)); DEVICES.filter((x) => x.handle === handle).forEach((x) => Object.assign(x, { dpc_version: '0.2.8', dpc_code: 208, agent_version: '0.2.8' })); return '0.2.8'; },
+    notify: (a) => { (window.__notes = window.__notes || []).push(a); },
+    open_dashboard: ({ serial }) => { window.__opened = serial; },
+    save_csv: ({ name, content }) => { window.__csv = content; return '/Users/ali/Downloads/' + name; },
     device_unpair: ({ serial, handles }) => { window.__unpaired = { serial, handles }; const h = new Set(handles); DEVICES.splice(0, DEVICES.length, ...DEVICES.filter((d) => !h.has(d.handle))); return 'Unpaired on this computer. On the phone, Wireless debugging is now open: tap this computer under Paired devices, then Forget.'; },
     sign_in: () => ({ username: 'muhammadali.hassan@aioapp.com', role: 'admin', server: '' }),
     sign_in_saved: () => ({ username: 'muhammadali.hassan@aioapp.com', role: 'admin', server: '' }),
