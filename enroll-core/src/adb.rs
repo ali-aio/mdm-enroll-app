@@ -12,6 +12,10 @@ pub struct Adb {
     /// Longest any single adb call may take. A phone that accepts the connection but never
     /// answers (asleep over Wi-Fi) would otherwise block the whole app forever.
     pub timeout: Duration,
+    /// A PEM private key adb should offer besides its own (`ADB_VENDOR_KEYS`): the fleet key that
+    /// AIO firmware trusts, written out after sign-in. The adb **server** reads this when it
+    /// starts, so a change only takes effect after [`Adb::restart_server`].
+    pub vendor_keys: Option<PathBuf>,
 }
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -707,12 +711,14 @@ impl Adb {
         cands
             .into_iter()
             .find(|p| p.is_file())
-            .map(|bin| Adb { bin, timeout: DEFAULT_TIMEOUT })
+            .map(|bin| Adb { bin, timeout: DEFAULT_TIMEOUT, vendor_keys: None })
     }
 
     fn cmd(&self) -> Command {
-        #[allow(unused_mut)] // only mutated on Windows
         let mut c = Command::new(&self.bin);
+        if let Some(k) = &self.vendor_keys {
+            c.env("ADB_VENDOR_KEYS", k);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -723,12 +729,12 @@ impl Adb {
 
     /// Same adb, but with the short timeout used for the checks that run on every refresh.
     pub fn quick(&self) -> Adb {
-        Adb { bin: self.bin.clone(), timeout: PROBE_TIMEOUT }
+        Adb { vendor_keys: self.vendor_keys.clone(), bin: self.bin.clone(), timeout: PROBE_TIMEOUT }
     }
 
     /// Same adb with a longer limit, for installs.
     pub fn patient(&self, secs: u64) -> Adb {
-        Adb { bin: self.bin.clone(), timeout: Duration::from_secs(secs) }
+        Adb { vendor_keys: self.vendor_keys.clone(), bin: self.bin.clone(), timeout: Duration::from_secs(secs) }
     }
 
     /// Runs adb with the given args; returns stdout. Errors carry stderr. Killed and
@@ -787,6 +793,14 @@ impl Adb {
 
     pub fn start_server(&self) {
         let _ = self.run(&["start-server"]);
+    }
+
+    /// The adb server reads `ADB_VENDOR_KEYS` once, at start, so a key that arrives later needs
+    /// the server restarting before any device sees it. Network connections are dropped by this;
+    /// USB devices come back by themselves. Only call it when the key really changed.
+    pub fn restart_server(&self) {
+        let _ = self.run(&["kill-server"]);
+        self.start_server();
     }
 
     pub fn devices(&self) -> Result<Vec<RawDevice>, String> {
@@ -1017,7 +1031,7 @@ mod tests {
 
     #[test]
     fn forget_refuses_usb_and_bad_handles_without_running_adb() {
-        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT, vendor_keys: None };
         assert!(a.disconnect_device("A1B2C3").unwrap_err().contains("USB"));
         assert!(a.disconnect_device("x; reboot").is_err());
         assert!(a.reprompt("x; reboot").is_err());
@@ -1043,7 +1057,7 @@ mod tests {
     #[test]
     fn a_hung_command_is_killed_at_the_timeout() {
         // `sleep` stands in for an adb call that never answers.
-        let a = Adb { bin: PathBuf::from("sleep"), timeout: Duration::from_millis(300) };
+        let a = Adb { bin: PathBuf::from("sleep"), timeout: Duration::from_millis(300), vendor_keys: None };
         let t = Instant::now();
         assert_eq!(a.run(&["5"]).unwrap_err(), "adb timed out");
         assert!(t.elapsed() < Duration::from_secs(2));
@@ -1068,7 +1082,7 @@ mod tests {
 
     #[test]
     fn to_wifi_refuses_network_and_bad_handles_without_running_adb() {
-        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT, vendor_keys: None };
         assert!(a.to_wifi("192.168.1.5:5555").unwrap_err().contains("already"));
         assert!(a.to_wifi("x; reboot").is_err());
     }
@@ -1150,7 +1164,7 @@ mod tests {
 
     #[test]
     fn pair_and_connect_validates_before_touching_adb() {
-        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT };
+        let a = Adb { bin: PathBuf::from("/nonexistent/adb"), timeout: DEFAULT_TIMEOUT, vendor_keys: None };
         assert!(a.pair_and_connect("not an address", "123456").is_err());
     }
 

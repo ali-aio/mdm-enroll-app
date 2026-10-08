@@ -211,7 +211,10 @@ function mergeDevices(rows) {
 const plainAdb = (d) => { const w = (d.conns || []).filter((c) => c.kind === 'wifi').map((c) => c.handle); return w.length > 0 && w.every((h) => /:5555$/.test(h)); };
 const connIcons = (d) => (d.hasUsb ? ICON.usb : '') + (d.wifiHandle ? ICON.wifi : '');
 const connLabel = (d) => (d.hasUsb && d.wifiHandle ? 'USB + Wi-Fi' : d.wifiHandle ? 'Wi-Fi' : 'USB');
-const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.handle === h)) || {}).serial) || store.get('class', 'dongle');
+// What this device will be enrolled as: the person's pick, else the class the MDM already uses for
+// this model. **Never** the last class used on some other device — a KDS enrolled as a dongle
+// because nobody looked at the control is worse than being made to choose.
+const classOf = (h) => picked[h] || suggestClassFor(((devices.find((x) => x.handle === h)) || {}).serial) || '';
 const iconOf = (d) => (d.status === 'unauthorized' ? ICON.help : ICON[d.class] || (d.status === 'firmware' ? ICON.tablet : ICON.phone));
 const GLYPH = { dongle: '#5e5ce6', pos: '#ff9f0a', kds: '#28b463', kiosk: '#0a84ff', t7: '#f9674e', tablet: '#f9674e', mpos: '#bf5af2', payment: '#30b0c7' };
 const glyphOf = (d) => (d.status === 'blocked' ? '#8e8e93' : GLYPH[d.class] || (d.status === 'firmware' ? '#f9674e' : '#8e8e93'));
@@ -814,8 +817,10 @@ function renderHero() {
       restaurantsList.length ? row('Goes to', goesTo, `<button class="lnk" data-site>Change</button>`) : '',
       row('Enrolled by', esc($('whoName').textContent || 'You')),
     ], ours ? 'Our agent already manages this phone, but this MDM has no record of it — it was probably enrolled to another server, or removed here. Re-enrolling registers it here and updates the agent; nothing is reset.'
+      : !cls ? 'Pick what this device is used as. The MDM fills this in by itself only for a model it already knows.'
       : site.id ? 'It skips the onboarding inbox and shows up in this restaurant right away.' : 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
-    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go" ${batch ? 'disabled' : ''}>${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'} <span class="kbd">${MOD}↩</span></button></div>`;
+    acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go" ${batch || !cls ? 'disabled' : ''} ${
+      cls ? '' : 'title="Pick what this device is used as first"'}>${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'} <span class="kbd">${MOD}↩</span></button></div>`;
   } else if (d.status === 'enrolling') {
     enrolG = group('Enrolling', STEPS.map((s, i) => stepRow(s, i, r?.step ?? 0)));
   } else if (d.status === 'enrolled') {
@@ -1108,11 +1113,10 @@ $('hero').addEventListener('click', async (e) => {
   const chip = e.target.closest('[data-c]');
   if (chip) {
     picked[d.handle] = chip.dataset.c;
-    store.set('class', chip.dataset.c);
     chip.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === chip));
     placeThumb(true);
-    heroKey = heroKeyFor(d);           // the pane already shows it
-    return;
+    heroKey = '';                      // the Enrol button turns on with the first pick
+    return renderHero();
   }
   if (e.target.closest('#next')) {
     const nxt = devices.find((x) => x.status === 'ready' && x.handle !== d.handle);
@@ -1259,7 +1263,8 @@ $('hero').addEventListener('click', async (e) => {
 });
 
 // ---- Enrol all: every ready device, one after another ----
-const readyForBatch = () => devices.filter((d) => d.status === 'ready' && !run[d.handle]?.queued);
+// A device with no class yet is not in the batch: it would have nothing to be enrolled as.
+const readyForBatch = () => devices.filter((d) => d.status === 'ready' && !run[d.handle]?.queued && classOf(d.handle));
 function renderBatchBtn() {
   const b = $('batchBtn'), n = readyForBatch().length;
   if (batch) {

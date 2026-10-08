@@ -147,12 +147,85 @@ fn clear_session(app: &AppHandle) {
     }
 }
 
+/// Where the fleet adb key is kept while someone is signed in. 0600, and deleted on sign-out:
+/// it is the whole fleet's key, so it never outlives the session that fetched it.
+fn fleet_key_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(config_dir(app)?.join("fleet-adbkey"))
+}
+
+fn fleet_key_version(app: &AppHandle) -> i64 {
+    config_dir(app)
+        .and_then(|d| std::fs::read_to_string(d.join("fleet-adbkey.version")).ok())
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Puts the fleet key where adb will offer it, or takes it away again. Returns true when the file
+/// on disk actually changed, which is the only time the adb server is worth restarting.
+fn set_fleet_key(app: &AppHandle, key: Option<&api::FleetKey>) -> bool {
+    let (Some(path), Some(dir)) = (fleet_key_path(app), config_dir(app)) else { return false };
+    let ver = dir.join("fleet-adbkey.version");
+    match key {
+        Some(k) => {
+            let pem = k.private_key_pem.trim();
+            if std::fs::read_to_string(&path).map(|c| c.trim() == pem).unwrap_or(false) {
+                return false;
+            }
+            write_private(&path, &format!("{pem}\n"));
+            let _ = std::fs::write(&ver, k.version.to_string());
+            true
+        }
+        None => {
+            let had = path.exists();
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&ver);
+            had
+        }
+    }
+}
+
+/// Fetches the fleet key when the server has a newer one than the copy on disk, and makes adb
+/// offer it. A server with no key (or too old to have the endpoint) is not an error: pairing
+/// codes still work, so this only ever quietly does nothing.
+/// Blocking: the network half. True when the key on disk changed and adb must be told.
+fn fetch_fleet_key(app: &AppHandle, session: &Session) -> bool {
+    let want = session.profile().map(|p| p.adb_key_version).unwrap_or(0);
+    if want != 0 && want == fleet_key_version(app) && fleet_key_path(app).map(|p| p.exists()).unwrap_or(false) {
+        return false;                             // already have this one
+    }
+    match session.fleet_key() {
+        Ok(k) => set_fleet_key(app, k.as_ref()),
+        Err(_) => false,                          // offline or expired: leave what we have
+    }
+}
+
+/// Points the live `Adb` at the key file (or away from it) and restarts the adb server, which is
+/// the only moment it reads `ADB_VENDOR_KEYS`.
+fn apply_fleet_key(app: &AppHandle, st: &State) {
+    let path = fleet_key_path(app).filter(|p| p.exists());
+    // adb that hasn't started yet picks the file up in adb_of, so there is nothing to do here.
+    let changed = {
+        let mut g = st.adb.lock().unwrap();
+        match g.as_mut() {
+            Some(a) if a.vendor_keys != path => {
+                a.vendor_keys = path;
+                Some(a.clone())
+            }
+            _ => None,
+        }
+    };
+    if let Some(a) = changed {
+        a.restart_server();
+    }
+}
+
 fn adb_of(app: &AppHandle, st: &State) -> Result<Adb, String> {
     let mut g = st.adb.lock().unwrap();
     if g.is_none() {
         let res: Option<PathBuf> = app.path().resource_dir().ok();
         *g = Adb::find(res.as_deref());
-        if let Some(a) = g.as_ref() {
+        if let Some(a) = g.as_mut() {
+            a.vendor_keys = fleet_key_path(app).filter(|p| p.exists());
             a.start_server();
         }
     }
@@ -322,7 +395,13 @@ async fn sign_in_inner(app: AppHandle, state: tauri::State<'_, State>, server: S
     let me = Me { username: s.username.clone(), role: s.role.clone(), server: s.server.clone() };
     let (app2, s2) = (app.clone(), s.clone());
     let _ = tauri::async_runtime::spawn_blocking(move || remember_account(&app2, &s2, if remember { Some(&pw) } else { None })).await;
-    *state.session.lock().unwrap() = Some(s);
+    *state.session.lock().unwrap() = Some(s.clone());
+    // The fleet key is what lets this computer talk to AIO firmware with no pairing code.
+    let (app3, s3) = (app.clone(), s);
+    let changed = tauri::async_runtime::spawn_blocking(move || fetch_fleet_key(&app3, &s3)).await.unwrap_or(false);
+    if changed {
+        apply_fleet_key(&app, &state);
+    }
     Ok(me)
 }
 
@@ -330,6 +409,10 @@ async fn sign_in_inner(app: AppHandle, state: tauri::State<'_, State>, server: S
 async fn sign_out(app: AppHandle, state: tauri::State<'_, State>) -> Result<(), String> {
     let s = state.session.lock().unwrap().take();
     clear_session(&app);
+    // The fleet key belongs to the session, not to this computer.
+    if set_fleet_key(&app, None) {
+        apply_fleet_key(&app, &state);
+    }
     if let Some(s) = s {
         let _ = tauri::async_runtime::spawn_blocking(move || s.logout()).await;
     }

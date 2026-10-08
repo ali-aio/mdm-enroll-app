@@ -60,6 +60,20 @@ pub struct Profile {
     pub name: String,
     #[serde(default)]
     pub has_avatar: bool,
+    /// Bumped by the server whenever a new fleet adb key is uploaded; 0 = it has none, or is older.
+    #[serde(default)]
+    pub adb_key_version: i64,
+}
+
+/// The adb key AIO firmware images trust. Fetched after sign-in, never shipped in the app.
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct FleetKey {
+    #[serde(default)]
+    pub version: i64,
+    #[serde(default)]
+    pub fingerprint: String,
+    #[serde(default)]
+    pub private_key_pem: String,
 }
 
 /// How the server sees a nearby phone's serial: fleet | production | family | lookalike | other.
@@ -218,6 +232,24 @@ impl Session {
             .map_err(map_err)?
             .into_json()
             .map_err(|e| ApiError::Other(e.to_string()))
+    }
+
+    /// The fleet adb key, so this computer can talk to AIO firmware without a pairing code.
+    /// `Ok(None)` when the server has no key uploaded, or is too old to have the endpoint — both
+    /// are ordinary: pairing codes still work. An expired session still comes back as an error.
+    pub fn fleet_key(&self) -> Result<Option<FleetKey>, ApiError> {
+        match agent()
+            .get(&format!("{}/api/v1/app/adb-key", self.server))
+            .set("Authorization", &self.auth())
+            .call()
+        {
+            Ok(r) => {
+                let k: FleetKey = r.into_json().map_err(|e| ApiError::Other(e.to_string()))?;
+                Ok((!k.private_key_pem.trim().is_empty()).then_some(k))
+            }
+            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(e) => Err(map_err(e)),
+        }
     }
 
     /// Profile picture PNG, or `None` when the user has none (or the server is older).
