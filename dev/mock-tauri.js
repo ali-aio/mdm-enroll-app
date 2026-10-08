@@ -57,7 +57,7 @@
       DEVICES.push(row({ handle: host + ':5555', name: 'AIO T7', serial: 'AT070AABU00875', android: '15', status: 'firmware', firmware_version: '1.8.8', server_seen: false })); return host + ':5555'; },
     restaurants: () => RESTAURANTS,
     agent_info: () => ({ version: '0.2.8', version_code: 208 }),
-    serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { if (s === 'AT070AA2600030') return [s, { enrolled: false, status: 'auto', last_seen_at: new Date(Date.now() - 3 * 86400e3).toISOString() }]; const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
+    serial_statuses: ({ serials }) => Object.fromEntries(serials.map((s) => { if (s === 'AT070AA2600030') return [s, { enrolled: false, status: 'auto', class: 't7', agent_version: '1.8.8', restaurant: 'Burger Hub · Gulberg', online: false, has_battery: true, battery_pct: 64, enrolled_by_name: '', last_seen_at: new Date(Date.now() - 3 * 86400e3).toISOString() }]; const d = DEVICES.find((x) => x.serial === s); return [s, d ? { enrolled: d.status === 'enrolled', status: d.status, online: !!d.online, restaurant: d.restaurant } : { enrolled: false }]; })),
     device_checks: ({ handle }) => {
       const left = Math.max(0, 2 - (window.__checks = (window.__checks || 0) + (window.__accountsOpened ? 1 : 0)));
       if (!left) DEVICES.filter((x) => x.handle === handle).forEach((x) => Object.assign(x, { status: 'ready', note: '' }));

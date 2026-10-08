@@ -90,6 +90,10 @@ const rel = (ts) => {
 let devices = [];       // one entry per phone (connections merged)
 let rawDevices = [];    // one entry per adb connection
 let selected = null;           // handle
+// A nearby phone being looked at in the right pane (its address). It is not connected, so the pane
+// shows what the MDM knows about it and a Pair button — the same shape as a connected device's page.
+let peek = null, peekAddr = '';
+const statusCache = new Map();  // serial -> MDM status, filled only for the phone being looked at
 let timer = null, polling = false;
 const picked = {};             // handle -> class chosen
 const run = {};                // handle -> { step, error, done }  (this session's enroll attempts)
@@ -261,13 +265,18 @@ async function discover() {
     renderPairing();
     autoPairPopup();
     renderFound();
-    if (!devices.length && !todayMode) renderHero();
+    if ((!devices.length || peek) && !todayMode) renderHero();
   } catch {} finally { discBusy = false; }
 }
 // A phone is already connected if any connection has the same address, the same discovery name, or
 // the same IP: one phone has several ports (5555 after "Switch to Wi-Fi", another for Wireless debugging).
 const hostOf = (a) => (a.includes(':') ? a.slice(0, a.lastIndexOf(':')) : '');
 const isConnected = (f) => rawDevices.some((x) => x.handle === f.addr || x.handle.startsWith(f.name) || (hostOf(x.handle) && hostOf(x.handle) === hostOf(f.addr)));
+
+// One row per phone: mDNS adds a " (2)" suffix when two phones claim the same name, and a phone's
+// address can change between scans, so the name without that suffix is what identifies it.
+const svcKey = (f) => (f.name || f.addr).replace(/ \(\d+\)$/, '');
+const peekSvc = () => (peek ? found.find((f) => svcKey(f) === peek && !isConnected(f)) || null : null);
 
 let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
 const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
@@ -304,7 +313,7 @@ function syncRows(container, items, keyOf, rowOf) {
 function renderFound() {
   const box = $('foundNet');
   let list = found.filter((f) => !isConnected(f));
-  const nameOf = (f) => (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || (clsOf(f) || {}).name || 'Phone';
+  const nameOf = svcName;
   const known = classKnown();
   const total = list.length;
   if (known) {
@@ -321,16 +330,15 @@ function renderFound() {
   const sw = known && nearOpen ? `<label class="sw ${onlyOurs ? 'on' : ''}" data-only title="Hide phones that are not ours">Only ours<i></i></label>` : '';
   const headHtml = `${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}`;
   if (head._html !== headHtml) { head.innerHTML = headHtml; head._html = headHtml; head.setAttribute('aria-expanded', nearOpen); }
-  const keyOfSvc = (f) => (f.name || f.addr).replace(/ \(\d+\)$/, '');
-  list = list.filter((f, i) => list.findIndex((g) => keyOfSvc(g) === keyOfSvc(f)) === i);    // one row per phone
+  list = list.filter((f, i) => list.findIndex((g) => svcKey(g) === svcKey(f)) === i);    // one row per phone
   const items = nearOpen ? (list.length ? list : [{ none: true }]) : [];
   // Keyed by the phone (its mDNS name), not its address: an IP change updates the row, it doesn't replace it.
-  syncRows(rows, items, (f) => (f.none ? '-none-' : keyOfSvc(f)), (f) => {
+  syncRows(rows, items, (f) => (f.none ? '-none-' : svcKey(f)), (f) => {
     if (f.none) return { cls: 'sec', html: 'None of these are ours.', attrs: { style: 'font-weight:400' } };
     const c = clsOf(f), sn = serialFromName(f);
     return {
-      cls: `sitem ${known && !isOurs(c) ? 'other' : ''}`.trim(),
-      attrs: { 'data-addr': f.addr },
+      cls: `sitem ${known && !isOurs(c) ? 'other' : ''} ${svcKey(f) === peek ? 'on' : ''}`.replace(/\s+/g, ' ').trim(),
+      attrs: { 'data-addr': f.addr, role: 'button' },
       html: `<span class="glyph" style="--g:${c && c.class === 'fleet' ? '#f9674e' : '#8e8e93'}">${ICON.phone}</span><span class="two"><b>${esc(nameOf(f))}</b><small>${esc(f.addr.split(':')[0])}${sn ? ' · ' + esc(sn) : ''}</small>${classChipHTML(c)}</span><button class="cc-btn sm" data-go>Pair</button>`,
     };
   });
@@ -339,11 +347,18 @@ $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
   if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
   const row = e.target.closest('[data-addr]');
-  if (row && e.target.closest('[data-go]')) {
-    const f = found.find((x) => x.addr === row.dataset.addr) || { addr: row.dataset.addr, name: '' };
-    openPairFor(hostOf(f.addr), (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || (clsOf(f) || {}).name || 'Phone', serialFromName(f), clsOf(f));
-  }
+  if (!row) return;
+  const f = found.find((x) => x.addr === row.dataset.addr) || { addr: row.dataset.addr, name: '' };
+  // Only the Pair button pairs. The row itself opens the phone in the right pane.
+  if (e.target.closest('[data-go]')) return pairSvc(f);
+  peek = svcKey(f); peekAddr = f.addr; selected = null; todayMode = false; heroKey = '';
+  refresh();
 });
+// Everything needed to pair one nearby phone, from its discovery entry.
+// The best name we have for a phone we haven't connected to: one we've seen before, else the model
+// the MDM knows (a fleet device's own name, or the model of the family its serial belongs to).
+const svcName = (f) => { const c = clsOf(f) || {}; return (savedPhones.find((p) => f.addr.startsWith(p.host + ':')) || {}).name || c.name || c.family || 'Phone'; };
+const pairSvc = (f) => openPairFor(hostOf(f.addr), svcName(f), serialFromName(f), clsOf(f));
 
 
 // ---- Pairing screens: listed in the rail, and a popup asks for the code ----
@@ -446,7 +461,7 @@ function pairSucceeded(handle, title = 'Paired and connected') {
   unignore(String(handle).split(':')[0]);
   setTimeout(() => {
     $('pmCode').hidden = false; $('pmGo').hidden = false; $('pmCancel').hidden = false;
-    closePairModal(); selected = handle; todayMode = false; heroKey = ''; tick();
+    closePairModal(); selected = handle; peek = null; todayMode = false; heroKey = ''; tick();
   }, 1100);
 }
 $('pmGo').addEventListener('click', async () => {
@@ -576,7 +591,7 @@ function renderRail() {
       el = document.createElement('button');
       el.className = 'sitem in';
       el.dataset.h = d.handle;
-      el.addEventListener('click', () => { selected = d.handle; todayMode = false; if (batch) batch.follow = false; refresh(); });
+      el.addEventListener('click', () => { selected = d.handle; peek = null; todayMode = false; if (batch) batch.follow = false; refresh(); });
     }
     have.delete(d.handle);
     el.classList.toggle('on', d.handle === selected && !todayMode);
@@ -646,10 +661,23 @@ function placeThumb(animate) {
   if (!animate) { void th.offsetWidth; th.style.transition = ''; }
 }
 function restartFade(el) { el.classList.remove('fade'); void el.offsetWidth; el.classList.add('fade'); }
+// The right pane, System Settings style: a header, then grouped label/value rows.
+const row = (k, v, extra = '', cls = '') => `<div class="row ${cls}"><span class="k">${k}</span>${v !== '' ? `<span class="v">${v}</span>` : ''}${extra}</div>`;
+const group = (title, rows, foot = '') => `<div class="ghead">${title}</div><div class="group">${rows.filter(Boolean).join('')}</div>${foot ? `<div class="gfoot">${foot}</div>` : ''}`;
+const pill = (cls, html, tip = '') => `<span class="pill ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
+
+const peekKeyFor = (f) => {
+  const sn = serialFromName(f), c = clsOf(f);
+  const st = sn ? statusCache.get(sn) : null;
+  return ['peek', svcKey(f), f.addr, c ? [c.class, c.device_class, c.production, c.family, c.family_count, c.last_seen].join(',') : '',
+    st === undefined ? '' : st === null ? 'none' : [st.status, st.class, st.restaurant, st.agent_version, st.online, st.battery_pct, st.last_seen_at, st.enrolled_by_name].join(',')].join('|');
+};
 const heroKeyFor = (d) => {
   const r = d && run[d.handle];
+  const pk = !d && peekSvc();
   return !adb.found ? 'adb|' + (guideOs || adb.os)
     : todayMode ? 'today'
+    : pk ? peekKeyFor(pk)
     : d ? [d.handle, d.status, classOf(d.handle), r?.error || '', r?.done ? 'd' : '', r?.queued ? 'q' : '', r?.out ? 'o' + r.out.live : '', d.server_seen ? 's' : '', d.server_status || '', d.wifiHandle ? 'w' : '', d.hasUsb ? 'u' : '', d.enrolled_by || '', d.name,
       d.firmware_version || '', d.agent_version || '', d.dpc_owner ? 'o' : '', d.dpc_version || '', d.dpc_code || 0, d.online ? 'on' : '', d.restaurant || '', site.id, restaurantsList.length ? 'R' : '', agentLatest?.version_code || 0, batch ? 'B' : ''].join('|') : 'empty|' + (pairScreens.length ? 'p' : '');
 };
@@ -674,6 +702,15 @@ function renderHero() {
     return;
   }
   if (todayMode) return renderToday(alive);
+  if (!d && peek) {
+    const pk = peekSvc();
+    if (pk) return renderPeek(pk, alive);
+    // It went off the Wi-Fi, or it is connected now: in that case show it as a connected device.
+    const host = hostOf(peekAddr);
+    const now = host && devices.find((x) => hostOf(x.handle) === host || (x.conns || []).some((c) => hostOf(c.handle) === host));
+    peek = null; peekAddr = '';
+    if (now) { selected = now.handle; heroKey = ''; return renderHero(); }
+  }
   if (!d) {
     // Two ways in, side by side. Nothing to click: a cable or a pairing screen is picked up by itself.
     setBar('AIO Enroll', 'No devices connected');
@@ -698,9 +735,6 @@ function renderHero() {
   // ---- the device pane, System Settings style: a header, then grouped label/value rows.
   const sub = stateLine(d);
   setBar(d.name || 'Unknown device', sub);
-  const row = (k, v, extra = '', cls = '') => `<div class="row ${cls}"><span class="k">${k}</span>${v !== '' ? `<span class="v">${v}</span>` : ''}${extra}</div>`;
-  const group = (title, rows, foot = '') => `<div class="ghead">${title}</div><div class="group">${rows.filter(Boolean).join('')}</div>${foot ? `<div class="gfoot">${foot}</div>` : ''}`;
-  const pill = (cls, html, tip = '') => `<span class="pill ${cls}"${tip ? ` title="${esc(tip)}"` : ''}>${html}</span>`;
   const justDone = d.status === 'enrolled' && r?.done;
   const placedAt = d.status === 'enrolled' ? d.restaurant || r?.out?.restaurant || '' : '';
   const hdr = `<div class="dhdr"><div class="dicon ${justDone ? 'done' : ''}" style="--g:${glyphOf(d)}">${justDone ? CHECK : iconOf(d)}</div><div><h1>${esc(d.name || 'Unknown device')}</h1><p>${esc(sub)}${placedAt ? ' · ' + esc(placedAt) : d.android ? ' · Android ' + esc(d.android) : ''}</p></div></div>`;
@@ -800,6 +834,65 @@ function renderHero() {
   placeThumb(false);
 }
 
+// A nearby phone that isn't connected yet, in the same page shape as a connected one: a header,
+// what the MDM knows about it, and the button that connects it. Nothing here touches the phone —
+// it is all the MDM's record, looked up by the serial its mDNS name carries.
+const peekPending = new Set();
+function renderPeek(f, alive) {
+  const hero = $('hero');
+  const name = svcName(f), sn = serialFromName(f), c = clsOf(f);
+  const st = sn ? statusCache.get(sn) : undefined;
+  const plain = /:5555$/.test(f.addr);
+  const sub = 'On this Wi-Fi · not connected';
+  setBar(name, sub);
+  const glyph = c && c.class === 'fleet' ? '#f9674e' : '#8e8e93';
+  const hdr = `<div class="dhdr"><div class="dicon" style="--g:${glyph}">${ICON.phone}</div><div><h1>${esc(name)}</h1><p>${esc(sub)}</p></div></div>`;
+
+  // The MDM's record. Asked for once, by serial, and kept until the app restarts.
+  if (sn && st === undefined && !peekPending.has(sn)) {
+    peekPending.add(sn);
+    invoke('serial_statuses', { serials: [sn] })
+      .then((m) => statusCache.set(sn, m[sn] || null))
+      .catch(() => statusCache.set(sn, null))
+      .finally(() => { peekPending.delete(sn); if (alive()) { heroKey = ''; renderHero(); } });
+  }
+  const onMdm = !!(st && st.status && st.status !== 'retired' && st.status !== 'wiped');
+  let knownG, foot = '';
+  if (!sn) {
+    knownG = group('What the MDM knows', [row('Serial number', 'Not advertised')],
+      'Its Wi-Fi name doesn’t carry a serial, so the MDM can’t be asked about it until it is connected.');
+  } else {
+    const rows = [row('Status', '', classChipHTML(c) || `<span class="waitmsg"><span class="spin"></span>Asking the MDM…</span>`)];
+    if (c && c.class === 'production' && c.production) rows.push(row('Production', esc(c.production)));
+    if (c && c.class === 'family') rows.push(row('Same model as', `${c.family_count || 0} enrolled device${c.family_count === 1 ? '' : 's'}${c.family ? ' · ' + esc(c.family) : ''}`));
+    if (onMdm) {
+      rows.push(st.class ? row('Used as', esc(st.class)) : '');
+      rows.push(row('Restaurant', st.restaurant ? esc(st.restaurant) : 'Onboarding inbox'));
+      rows.push(st.agent_version ? row('Agent', esc(st.agent_version)) : '');
+      rows.push(st.enrolled_by_name ? row('Enrolled by', esc(st.enrolled_by_name)) : '');
+    } else if (c && c.class !== 'other' && st !== undefined) {
+      foot = 'The MDM has no device record for this serial yet. Connecting it here is how it gets one.';
+    }
+    knownG = group('What the MDM knows', rows, foot);
+  }
+  // Only for a device the MDM already has: how it is doing right now.
+  const liveG = !onMdm || st.online === null || st.online === undefined ? '' : group('On the MDM', [
+    row('Status', '', st.online ? '<span class="pill ok"><span class="live"><i></i>Online</span></span>' : pill('warn', 'Offline')),
+    row('Last check-in', st.last_seen_at ? agoShort(st.last_seen_at) + ' ago' : 'Never', '', ''),
+    st.has_battery ? row('Battery', st.battery_pct + '%') : row('Power', 'Mains powered'),
+  ], st.online ? '' : 'Not checking in right now. It may be switched off, offline, or running firmware without the MDM client.');
+
+  const connG = group('Connection', [
+    row(ICON.wifi + 'Wi-Fi', `<span class="mono">${esc(f.addr)}</span>`, pill('warn', 'Not connected')),
+  ], plain ? 'Plain adb is open on this phone (port 5555). It connects without a code if it already trusts this computer’s key.'
+    : 'Wireless debugging is on. It connects without a code if it already trusts this computer’s key; otherwise it asks for a pairing code.');
+  const deviceG = group('Device', [row('Serial number', sn ? `<span class="mono">${esc(sn)}</span>` : '—'), row('Address', `<span class="mono">${esc(f.addr)}</span>`)]);
+  const acts = `<div class="dacts">${onMdm && sn ? `<button class="cc-btn" data-peekdash>${ICON.ext} Open on Dashboard</button>` : ''}<button class="cc-btn primary lg" data-peekpair>${plain ? 'Connect' : 'Pair'}</button></div>`;
+
+  hero.innerHTML = `<div class="dwrap">${hdr}${knownG}${liveG}${acts}<div style="height:18px"></div>${connG}${deviceG}</div>`;
+  restartFade(hero);
+}
+
 // The blocked checklist re-reads the phone every few seconds, so each item ticks off as it is fixed.
 // Once it is clean the device list sees it as ready and the page turns into the Enrol page.
 async function pollChecks(handle, alive) {
@@ -867,6 +960,12 @@ $('hero').addEventListener('click', async (e) => {
   const retry = e.target.closest('[data-retry]');
   if (retry) return retryAdb(retry);
   if (e.target.closest('[data-openhelp]')) { e.preventDefault(); return openHelp('tr'); }
+  // The nearby-phone page: it has no connection, so only these two buttons.
+  const pk = !selected && peekSvc();
+  if (pk) {
+    if (e.target.closest('[data-peekpair]')) return pairSvc(pk);
+    if (e.target.closest('[data-peekdash]')) return invoke('open_dashboard', { serial: serialFromName(pk) }).catch(() => {});
+  }
   const d = devices.find((x) => x.handle === selected);
   if (!d) return;
   if (e.target.closest('[data-fix]')) { fixOpen = !fixOpen; heroKey = ''; return renderHero(); }
@@ -1044,7 +1143,7 @@ function renderTodayNav() {
   box.dataset.sig = sig;
   box.innerHTML = n ? `<div class="sec">Today</div><button class="sitem ${todayMode ? 'on' : ''}" id="todayItem" style="${todayMode ? 'background:var(--sel);color:var(--accent-text)' : ''}"><span class="glyph" style="--g:#34c759">${ICON.clock}</span><span class="nm">Enrolled today</span><span class="cnt">${n}</span></button>` : '';
 }
-const openToday = () => { if (!todays().length) return; todayMode = true; heroKey = ''; refresh(); };
+const openToday = () => { if (!todays().length) return; todayMode = true; peek = null; heroKey = ''; refresh(); };
 $('todayNav').addEventListener('click', (e) => { if (e.target.closest('#todayItem')) openToday(); });
 $('today').addEventListener('click', openToday);
 
@@ -1205,19 +1304,19 @@ $('qKey').textContent = MOD + 'F';
 $('q').addEventListener('input', () => {
   query = $('q').value;
   const shown = visibleDevices();
-  if (shown.length && !shown.some((d) => d.handle === selected)) { selected = shown[0].handle; todayMode = false; }
+  if (shown.length && !peek && !shown.some((d) => d.handle === selected)) { selected = shown[0].handle; todayMode = false; }
   refresh();
 });
 $('q').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { $('q').value = ''; query = ''; $('q').blur(); refresh(); e.stopPropagation(); }
-  if (e.key === 'Enter') { const f = visibleDevices()[0]; if (f) { selected = f.handle; todayMode = false; refresh(); } $('q').blur(); }
+  if (e.key === 'Enter') { const f = visibleDevices()[0]; if (f) { selected = f.handle; peek = null; todayMode = false; refresh(); } $('q').blur(); }
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); moveSel(e.key === 'ArrowDown' ? 1 : -1); }
 });
 function moveSel(dir) {
   const list = visibleDevices(); if (!list.length) return;
   const i = list.findIndex((d) => d.handle === selected);
   const n = list[i < 0 ? 0 : Math.max(0, Math.min(list.length - 1, i + dir))];
-  selected = n.handle; todayMode = false; if (batch) batch.follow = false; refresh();
+  selected = n.handle; peek = null; todayMode = false; if (batch) batch.follow = false; refresh();
 }
 const sheetOpen = () => !$('pairModal').hidden || !$('confirm').hidden;
 document.addEventListener('keydown', (e) => {
@@ -1246,7 +1345,7 @@ async function tick() {
     const prevSerial = (devices.find((x) => x.handle === selected) || {}).serial;
     devices = mergeDevices(next);
     if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; }
-    if (!devices.some((d) => d.handle === selected)) {
+    if (!peek && !devices.some((d) => d.handle === selected)) {
       const same = prevSerial && devices.find((x) => x.serial === prevSerial);   // e.g. the cable was unplugged
       selected = (same || devices.find((d) => d.status === 'ready') || devices[0])?.handle ?? null;
     }

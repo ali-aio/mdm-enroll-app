@@ -191,6 +191,11 @@ html[data-os="mac"] .side-top { height: 40px; }                          /* room
 .sitem .x { opacity: 0; width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: opacity .15s; flex: none; }
 .sitem:hover .x { opacity: 1; }
 .sitem .x:hover { background: var(--press); color: var(--text); }
+/* A nearby phone's row opens it in the right pane, so it is clickable and shows the selection. */
+.nbrows .sitem { cursor: pointer; }
+.nbrows .sitem.on { background: var(--sel); }
+.nbrows .sitem.on b, .nbrows .sitem.on .nm { color: var(--accent-text); }
+.nbrows .sitem.on.other { opacity: 1; }
 .sitem.pair { background: var(--accent-soft); }
 .sitem.pair .go { opacity: 1; color: var(--accent-text); font-weight: 500; }
 .disc { width: 12px; height: 12px; color: var(--muted); transition: transform .2s var(--ease); }
