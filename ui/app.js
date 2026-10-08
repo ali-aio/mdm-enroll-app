@@ -677,11 +677,14 @@ const isDone = (d) => d.status === 'enrolled' || (d.status === 'firmware' && d.s
 const sectionOf = (d) => (isDone(d) ? 'enrolled' : ['ready', 'enrolling'].includes(d.status) ? 'ready' : 'connected');
 
 const SECTIONS = [['ready', 'Ready to enrol'], ['enrolled', 'Enrolled'], ['connected', 'Connected']];
-const rowHTML = (d) => {
+const rowHTML = (d, section) => {
   const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
   const p = progressOf(d), q = query.trim(), r = run[d.handle];
   const qline = r?.queued ? 'Waiting…' : d.status === 'enrolling' ? (STEPS[r?.step ?? 0] || 'Enrolling') + '…' : '';
-  const label = q || qline
+  // Under "Enrolled" the serial is the useful line — it is what the dashboard and the MDM call it,
+  // and it matches the rows beside it for devices we hold no connection to.
+  const sub = qline || (section === 'enrolled' && d.serial ? d.serial : '');
+  const label = q || sub
     ? `<span class="two"><b>${hl(d.name || 'Unknown device')}</b><small class="${qline ? 'qstep' : ''}">${qline ? esc(qline) : hl(d.serial || d.handle)}</small></span>`
     : `<span class="nm">${esc(d.name || 'Unknown device')}</span>`;
   return `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span>${label}<span class="conn">${connIcons(d)}</span><span class="stat">${
@@ -727,7 +730,7 @@ function renderRail() {
     const d = x.d;
     return { cls: 'sitem' + (d.handle === selected && !todayMode ? ' on' : ''),
       attrs: { 'data-h': d.handle, role: 'button', title: `${d.name || 'Unknown device'} · ${stateLine(d)} · ${connLabel(d)}` },
-      html: rowHTML(d) };
+      html: rowHTML(d, sectionOf(d)) };
   });
 
   let none = rail.querySelector('.none');
