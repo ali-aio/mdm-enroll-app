@@ -60,6 +60,52 @@ pub struct Firmware {
 
 /// `pm list packages <filter>` matches substrings (it would also list `.dpc`), so look
 /// for the exact package line.
+/// Marker printed between the sections of the one-shot [`Adb::scan`] command. It has to be
+/// something no dumpsys ever prints on its own.
+const SECTION: &str = "__aio_section__";
+
+/// Everything one device says about itself, read in a single shell command.
+#[derive(Debug, Default, Clone)]
+pub struct Scan {
+    pub details: Details,
+    pub owner: Owner,
+    pub accounts: Vec<String>,
+    pub account_count: usize,
+    pub users: usize,
+    pub firmware: Option<Firmware>,
+    /// Our DPC agent's version, whether or not it is Device Owner ("" / 0 when not installed).
+    pub dpc_version: String,
+    pub dpc_code: i64,
+}
+
+/// Cuts a [`Adb::scan`] reply back into its parts. The text before the first marker is the
+/// `getprop` dump and is keyed "".
+fn split_sections(out: &str) -> std::collections::HashMap<&str, &str> {
+    let mut map = std::collections::HashMap::new();
+    let mut name = "";
+    let mut start = 0usize;
+    let mut at = 0usize;
+    for line in out.split_inclusive('\n') {
+        let t = line.trim();
+        if let Some(next) = t.strip_prefix(SECTION) {
+            map.insert(name, &out[start..at]);
+            name = next;
+            start = at + line.len();
+        }
+        at += line.len();
+    }
+    map.insert(name, &out[start..]);
+    map
+}
+
+/// One value out of a full `getprop` dump, whose lines read `[ro.serialno]: [ABC123]`.
+pub fn getprop(dump: &str, key: &str) -> String {
+    let want = format!("[{key}]: [");
+    dump.lines()
+        .find_map(|l| l.trim().strip_prefix(&want)?.strip_suffix(']').map(str::to_string))
+        .unwrap_or_default()
+}
+
 pub fn package_listed(out: &str, pkg: &str) -> bool {
     let want = format!("package:{pkg}");
     out.lines().any(|l| l.trim() == want)
@@ -209,6 +255,19 @@ pub fn fix_pairing_hosts(svcs: &mut [MdnsService], is_open: impl Fn(&str) -> boo
                 break;
             }
         }
+    }
+}
+
+/// What to call a device. Some makers already put their own name in the model, so a plain
+/// "{manufacturer} {model}" gives "SUNMI SUNMI D2s"; only add the maker when the model omits it.
+pub fn device_name(manufacturer: &str, model: &str) -> String {
+    let (mk, md) = (manufacturer.trim(), model.trim());
+    if md.is_empty() {
+        mk.to_string()
+    } else if mk.is_empty() || md.to_lowercase().starts_with(&mk.to_lowercase()) {
+        md.to_string()
+    } else {
+        format!("{mk} {md}")
     }
 }
 
@@ -738,6 +797,52 @@ impl Adb {
         self.shell(handle, &["getprop", name]).unwrap_or_default().trim().to_string()
     }
 
+    /// Everything the device list needs, in **one** `adb shell`. Eleven separate shells over a
+    /// Wi-Fi adb link cost a round trip each and made listing a handful of phones take seconds;
+    /// one command with markers between the sections costs one. Returns `None` when the phone
+    /// answered nothing at all, which the caller reads as "asleep or gone".
+    pub fn scan(&self, handle: &str) -> Option<Scan> {
+        let script = format!(
+            "getprop; echo {M}policy; dumpsys device_policy; echo {M}account; dumpsys account; \
+             echo {M}users; pm list users; echo {M}pkgs; pm list packages; \
+             echo {M}fw; dumpsys package {FIRMWARE_PKG}; echo {M}dpc; dumpsys package {dpc}",
+            M = SECTION,
+            dpc = crate::DPC_PKG,
+        );
+        let out = self.shell(handle, &[script.as_str()]).ok()?;
+        let s = split_sections(&out);
+        let props = s.get("").copied().unwrap_or_default();
+        let details = Details {
+            serial: getprop(props, "ro.serialno"),
+            manufacturer: getprop(props, "ro.product.manufacturer"),
+            model: getprop(props, "ro.product.model"),
+            android: getprop(props, "ro.build.version.release"),
+        };
+        if !details.responsive() {
+            return None;
+        }
+        let pkgs = s.get("pkgs").copied().unwrap_or_default();
+        let firmware = package_listed(pkgs, FIRMWARE_PKG).then(|| {
+            let mut build = getprop(props, "ro.build.display.id");
+            if build.is_empty() {
+                build = getprop(props, "ro.build.id");
+            }
+            Firmware { version: parse_version_name(s.get("fw").copied().unwrap_or_default()), build }
+        });
+        let dpc = s.get("dpc").copied().unwrap_or_default();
+        let account = s.get("account").copied().unwrap_or_default();
+        Some(Scan {
+            details,
+            owner: parse_owner(s.get("policy").copied().unwrap_or_default()),
+            accounts: parse_accounts(account),
+            account_count: account.matches("Account {").count(),
+            users: parse_user_count(s.get("users").copied().unwrap_or_default()).max(1),
+            firmware,
+            dpc_version: parse_version_name(dpc),
+            dpc_code: parse_version_code(dpc),
+        })
+    }
+
     pub fn details(&self, handle: &str) -> Details {
         Details {
             serial: self.prop(handle, "ro.serialno"),
@@ -1117,5 +1222,42 @@ mod tests {
         assert_eq!(names, vec!["adb-AT070AA2600030", "adb-b9ab6943-K8KVWX (2)"]);
         assert_eq!(base_name("adb-b9ab6943-K8KVWX (2)"), "adb-b9ab6943-K8KVWX");
         assert_eq!(base_name("adb-AT070AA2600030"), "adb-AT070AA2600030");
+    }
+
+    #[test]
+    fn one_shell_reply_is_cut_back_into_its_parts() {
+        // The shape a real phone sends back: a getprop dump, then a marked section each.
+        let out = concat!(
+            "[ro.product.manufacturer]: [SUNMI]\n[ro.serialno]: [DK19256F40580]\n",
+            "[ro.product.model]: [SUNMI D2s]\n[ro.build.version.release]: [11]\n",
+            "__aio_section__policy\n  Device Owner: \n",
+            "    admin=ComponentInfo{aio.app.mdmclient.dpc/aio.app.mdmclient.dpc.MdmDeviceAdminReceiver}\n",
+            "    name=x package=aio.app.mdmclient.dpc\n",
+            "__aio_section__account\nAccount {name=a@b.com, type=com.google}\n",
+            "__aio_section__users\nUsers:\n\tUserInfo{0:Owner:c13} running\n",
+            "__aio_section__pkgs\npackage:aio.app.mdmclient.dpc\n",
+            "__aio_section__fw\n",
+            "__aio_section__dpc\n    versionCode=208 minSdk=30\n    versionName=0.2.8\n",
+        );
+        let s = split_sections(out);
+        assert_eq!(getprop(s[""], "ro.serialno"), "DK19256F40580");
+        assert_eq!(getprop(s[""], "ro.product.model"), "SUNMI D2s");
+        assert_eq!(getprop(s[""], "ro.build.id"), "");            // absent: empty, not a wrong value
+        assert!(parse_owner(s["policy"]).ours);
+        assert_eq!(parse_accounts(s["account"]), vec!["a@b.com (Google)"]);
+        assert_eq!(parse_user_count(s["users"]), 1);
+        assert!(!package_listed(s["pkgs"], FIRMWARE_PKG));        // this one has no firmware client
+        assert_eq!(parse_version_name(s["dpc"]), "0.2.8");
+        assert_eq!(parse_version_code(s["dpc"]), 208);
+        assert_eq!(s["fw"].trim(), "");
+    }
+
+    #[test]
+    fn a_maker_already_in_the_model_is_not_repeated() {
+        assert_eq!(device_name("SUNMI", "SUNMI D2s"), "SUNMI D2s");
+        assert_eq!(device_name("sunmi", "SUNMI D3 Pro"), "SUNMI D3 Pro");
+        assert_eq!(device_name("Google", "Pixel 6"), "Google Pixel 6");
+        assert_eq!(device_name("", "AIO T7"), "AIO T7");
+        assert_eq!(device_name("AIO", ""), "AIO");
     }
 }

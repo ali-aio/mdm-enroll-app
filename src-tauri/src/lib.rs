@@ -1,4 +1,4 @@
-use enroll_core::adb::{Adb, Details, Firmware, Owner};
+use enroll_core::adb::{self, Adb, Details, Firmware, Owner};
 use enroll_core::api::{self, ApiError, Session};
 use enroll_core::enroll::{enroll_device, Outcome};
 use serde::{Deserialize, Serialize};
@@ -71,22 +71,18 @@ struct DeviceRow {
 /// All the read-only checks for one device. Short timeouts: a phone that never answers
 /// comes back `unresponsive` instead of hanging the list.
 fn probe_device(q: &Adb, handle: &str) -> Probe {
-    let details = q.details(handle);
-    if !details.responsive() {
-        return Probe { details, unresponsive: true, ..Default::default() };
-    }
-    let owner = q.owner(handle);
-    let (dpc_version, dpc_code) = if owner.ours {
-        (q.package_version(handle, enroll_core::DPC_PKG), q.package_version_code(handle, enroll_core::DPC_PKG))
-    } else {
-        (String::new(), 0)
+    // One shell command for the lot: over Wi-Fi each round trip costs, and this used to be eleven.
+    let Some(s) = q.scan(handle) else {
+        return Probe { details: q.details(handle), unresponsive: true, ..Default::default() };
     };
+    // The agent's version is only shown when it is the Device Owner, as before.
+    let (dpc_version, dpc_code) = if s.owner.ours { (s.dpc_version, s.dpc_code) } else { (String::new(), 0) };
     Probe {
-        owner,
-        accounts: q.account_count(handle),
-        users: q.user_count(handle),
-        firmware: q.firmware(handle),
-        details,
+        owner: s.owner,
+        accounts: s.account_count,
+        users: s.users,
+        firmware: s.firmware,
+        details: s.details,
         dpc_version,
         dpc_code,
         unresponsive: false,
@@ -411,7 +407,7 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                     }
                     row.serial = probe.details.serial.clone();
                     row.android = probe.details.android.clone();
-                    let name = format!("{} {}", probe.details.manufacturer, probe.details.model).trim().to_string();
+                    let name = adb::device_name(&probe.details.manufacturer, &probe.details.model);
                     if !name.is_empty() {
                         row.name = name;
                     }

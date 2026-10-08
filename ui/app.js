@@ -472,9 +472,11 @@ async function openPairFor(host, name, serial, cls) {
   if (quickTok !== tok || $('pairModal').hidden) return;      // cancelled meanwhile
   $('pmCode').hidden = false; $('pmGo').hidden = false;
   if (handle) return pairSucceeded(handle, 'Connected — no code needed');
-  askPairFor(host, name, serial, cls);
+  askPairFor(host, name, serial, cls, true);
 }
-function askPairFor(host, name, serial, cls) {
+// `tried` = we already offered this computer's adb key and it was refused, so say so rather than
+// leaving an unexplained spinner.
+function askPairFor(host, name, serial, cls, tried) {
   const s = pairScreens.find((x) => hostOf(x.addr) === host);
   if (s) { pairWantHost = ''; pairDismissed.delete(s.addr); return openPairModal(s); }
   pairWantHost = host; pairAddr = ''; pairBusy = false;
@@ -484,7 +486,7 @@ function askPairFor(host, name, serial, cls) {
   const hint = $('pmHint'); hint.hidden = !cls || cls.class === 'other'; hint.innerHTML = cls && cls.class !== 'other' ? classChipHTML(cls) : '';
   $('pmAsk').innerHTML = 'On the phone: <b>Developer options → Wireless debugging → Pair device with pairing code</b>.';
   $('pmCode').value = ''; $('pmCode').disabled = true; $('pmCode').hidden = false;
-  $('pmMsg').innerHTML = '<div class="wmsg waitmsg"><span class="spin"></span> Waiting for its pairing screen…</div>';
+  $('pmMsg').innerHTML = `<div class="wmsg waitmsg"><span class="spin"></span> ${tried ? 'It doesn’t trust this computer’s adb key yet. ' : ''}Waiting for its pairing screen…</div>`;
   $('pmConn').hidden = true; $('pmGo').hidden = false; $('pmGo').disabled = true; $('pmGo').textContent = 'Pair';
   $('pairModal').hidden = false;
 }
@@ -1124,6 +1126,14 @@ $('hero').addEventListener('click', async (e) => {
   if (ok) tellDone([d.handle]);
 });
 
+// adb's words for a dead link ("device 'x' not found", "closed", "protocol fault") mean nothing to
+// the person holding the phone. It has almost always gone to sleep or left the Wi-Fi: say that.
+const LINK_DIED = /device (?:'[^']*' )?not found|device offline|closed|protocol fault|connection (?:reset|refused)|broken pipe|no devices\/emulators found|transport|timed? ?out/i;
+const humanError = (e) => {
+  const s = String(e).replace(/^Error:\s*/, '').trim();
+  return LINK_DIED.test(s) ? 'The device stopped answering — it may have gone to sleep, or left the Wi-Fi. Wake it and try again.' : s;
+};
+
 // Enrols one device; shared by the Enrol button and "Enrol all". True when it worked.
 async function runEnroll(d) {
   const cls = classOf(d.handle), dest = { ...site };
@@ -1137,7 +1147,7 @@ async function runEnroll(d) {
     logEnrolled({ name: d.name || 'Device', serial: out.serial || d.serial || '', cls, restaurant: out.restaurant || dest.name || '', live: out.live });
     ok = true;
   } catch (err) {
-    run[d.handle] = { error: String(err) };
+    run[d.handle] = { error: humanError(err) };
     $('pbar').style.width = '0';
   }
   heroKey = '';
