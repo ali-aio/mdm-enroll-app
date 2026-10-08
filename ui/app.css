@@ -149,7 +149,14 @@ form.working input { opacity: .6; pointer-events: none; }
 .tile.busy .av::before { content: ""; position: absolute; width: 26px; height: 26px; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .4); border-top-color: #fff; animation: rot .7s linear infinite; z-index: 1; }
 
 /* ── window layout ──────────────────────────────────────────────────────── */
-#app { display: grid; grid-template-columns: 250px 1fr; height: 100%; }
+:root { --sidew: 250px; }
+#app { position: relative; display: grid; grid-template-columns: var(--sidew) 1fr; height: 100%; }
+/* The line between the sidebar and the page: drag it to resize, double-click to put it back. */
+.sidegrip { position: absolute; z-index: 60; top: 0; bottom: 0; left: var(--sidew); width: 11px; margin-left: -6px; cursor: col-resize; touch-action: none; }
+.sidegrip::after { content: ''; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px; background: var(--accent); opacity: 0; transition: opacity .15s; }
+.sidegrip:hover::after, .sidegrip.on::after { opacity: 1; }
+html.resizing { cursor: col-resize; user-select: none; }
+html.resizing .sidegrip::after { opacity: 1; }
 .side { background: var(--side); border-right: .5px solid var(--sep); display: flex; flex-direction: column; min-height: 0; }
 html[data-os="mac"] body { background: transparent; }
 html[data-os="mac"] .side { background: var(--side-glass); }          /* the window's sidebar vibrancy shows through */
@@ -325,7 +332,7 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
 
 /* pairing code: a sheet that drops from the toolbar */
 .pm-back { position: absolute; inset: 0; z-index: 70; display: flex; justify-content: center; align-items: flex-start; padding-top: 52px; background: rgba(0, 0, 0, .14); animation: fade .2s both; }
-#app .pm-back { left: 250px; }
+#app .pm-back { left: var(--sidew); }
 .pm-card { width: min(380px, 92%); background: var(--bg); border-radius: 0 0 14px 14px; box-shadow: 0 20px 50px rgba(0, 0, 0, .3), 0 0 0 .5px var(--sep); padding: 22px 22px 16px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 5px; animation: drop .32s var(--ease) both; }
 @keyframes drop { from { transform: translateY(-100%); } to { transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
@@ -366,14 +373,12 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
 .wform input { border-radius: 7px; background: var(--group); }
 
 @media (max-width: 860px) {
-  #app { grid-template-columns: 210px 1fr; }
-  #app .pm-back { left: 210px; }
+  :root { --sidew: 210px; }
   .hero { padding: 20px 20px 28px; }
   .split { grid-template-columns: 1fr 170px; gap: 18px; }
 }
 @media (max-width: 760px) {
-  #app { grid-template-columns: 200px 1fr; }
-  #app .pm-back { left: 200px; }
+  :root { --sidew: 200px; }
   .split { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; } }

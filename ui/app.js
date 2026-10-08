@@ -65,6 +65,50 @@ function applyZoom() {
   document.documentElement.style.zoom = String(+(auto * userZoom).toFixed(3));
 }
 window.addEventListener('resize', applyZoom);
+
+// ---- The sidebar's width: drag the line between it and the page, double-click to put it back ----
+// Everything here is in CSS pixels. The window is zoomed (above), and pointer coordinates come back
+// in the zoomed space, so each measurement is divided by the zoom before it becomes --sidew.
+const SIDE_DEFAULT = 250, SIDE_MIN = 190, SIDE_MAX = 520;
+const zoomNow = () => parseFloat(document.documentElement.style.zoom) || 1;
+const clampSide = (w) => Math.round(Math.max(SIDE_MIN, Math.min(w, SIDE_MAX, (window.innerWidth / zoomNow()) * 0.55)));
+let sideW = parseFloat(store.get('sidew', '')) || 0;     // 0 = never dragged: the stylesheet decides
+function applySide(save) {
+  if (!sideW) return;
+  const w = clampSide(sideW);
+  document.documentElement.style.setProperty('--sidew', w + 'px');
+  if (save) store.set('sidew', String(sideW));
+}
+function setSide(w, save = true) { sideW = clampSide(w); applySide(save); }
+applySide(false);
+window.addEventListener('resize', () => applySide(false));   // a narrow window squeezes it, the choice is kept
+
+{
+  const grip = $('sidegrip'), side = document.querySelector('.side');
+  let from = 0, startW = 0;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button) return;
+    from = e.clientX; startW = side.getBoundingClientRect().width;
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add('on'); document.documentElement.classList.add('resizing');
+    e.preventDefault();
+  });
+  grip.addEventListener('pointermove', (e) => { if (from) setSide((startW + e.clientX - from) / zoomNow()); });
+  const stop = (e) => {
+    if (!from) return;
+    from = 0; grip.classList.remove('on'); document.documentElement.classList.remove('resizing');
+    try { grip.releasePointerCapture(e.pointerId); } catch {}
+  };
+  grip.addEventListener('pointerup', stop);
+  grip.addEventListener('pointercancel', stop);
+  grip.addEventListener('dblclick', () => { sideW = 0; store.set('sidew', ''); document.documentElement.style.removeProperty('--sidew'); });
+  grip.addEventListener('keydown', (e) => {
+    const step = e.key === 'ArrowLeft' ? -16 : e.key === 'ArrowRight' ? 16 : 0;
+    if (!step) return;
+    e.preventDefault();
+    setSide((sideW || side.getBoundingClientRect().width / zoomNow()) + step);
+  });
+}
 document.addEventListener('keydown', (e) => {
   if (!(e.ctrlKey || e.metaKey)) return;
   const k = e.key;
