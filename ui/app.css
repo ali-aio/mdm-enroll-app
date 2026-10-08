@@ -203,6 +203,13 @@ html[data-os="mac"] .side-top { height: 40px; }                          /* room
 .nbrows .sitem.on { background: var(--sel); }
 .nbrows .sitem.on b, .nbrows .sitem.on .nm { color: var(--accent-text); }
 .nbrows .sitem.on.other { opacity: 1; }
+/* A device the MDM has on record that nothing is connected to: present, but not reachable here. */
+.sitem.off { cursor: pointer; }
+.sitem.off .two b, .sitem.off .two small { color: var(--muted); }
+.sitem.off.on { background: var(--sel); }
+.sitem.off.on .two b { color: var(--accent-text); }
+.sec.more { cursor: pointer; color: var(--link); font-weight: 400; }
+.sec.more:hover { text-decoration: underline; }
 .sitem.pair { background: var(--accent-soft); }
 .sitem.pair .go { opacity: 1; color: var(--accent-text); font-weight: 500; }
 .disc { width: 12px; height: 12px; color: var(--muted); transition: transform .2s var(--ease); }

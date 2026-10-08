@@ -476,6 +476,15 @@ async fn list_devices(app: AppHandle, state: tauri::State<'_, State>) -> Result<
                 server_status: String::new(), last_seen: String::new(),
             };
             match d.state.as_str() {
+                // Over a cable this is a real device waiting for "Allow USB debugging?" on screen.
+                // Over the network it is a stranger whose adb we knocked on and which does not
+                // trust us — it will never show a prompt, so it is not a device of ours. Drop the
+                // connection and keep it out of the list entirely.
+                "unauthorized" if enroll_core::adb::is_network_handle(&d.handle) => {
+                    let (q, h) = (adb.quick(), d.handle.clone());
+                    std::thread::spawn(move || q.disconnect_device(&h));
+                    continue;
+                }
                 "unauthorized" => {
                     row.status = "unauthorized".into();
                     row.note = "Accept the USB debugging prompt on the device".into();

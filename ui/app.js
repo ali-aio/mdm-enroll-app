@@ -359,7 +359,9 @@ const isConnected = (f) => rawDevices.some((x) => x.handle === f.addr || x.handl
 const svcKey = (f) => (f.name || f.addr).replace(/ \(\d+\)$/, '');
 const peekSvc = () => (peek ? found.find((f) => svcKey(f) === peek && !isConnected(f)) || null : null);
 
-let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0;
+let nearOpen = store.get('nearOpen', '0') === '1', nearPrev = 0, nearAll = false;
+/// How many phones on the Wi-Fi to show before "Show more".
+const NEARBY_AT_FIRST = 5;
 const CHEV = '<svg class="ic" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
 
 // One quiet, collapsed row ("Nearby phones (5)") instead of a card per phone.
@@ -393,7 +395,8 @@ function syncRows(container, items, keyOf, rowOf) {
 // One quiet, collapsed group ("Nearby (5)"); rows update in place on every scan.
 function renderFound() {
   const box = $('foundNet');
-  let list = found.filter((f) => !isConnected(f));
+  // Not the ones already shown above: connected, or enrolled-and-on-record under "Enrolled".
+  let list = found.filter((f) => !isConnected(f) && !fleetSerial(serialFromName(f)));
   const nameOf = svcName;
   const known = classKnown();
   const total = list.length;
@@ -412,10 +415,14 @@ function renderFound() {
   const headHtml = `${CHEVR(nearOpen)}Nearby <span class="count">${known && onlyOurs ? list.length + '/' + total : total}</span>${sw}`;
   if (head._html !== headHtml) { head.innerHTML = headHtml; head._html = headHtml; head.setAttribute('aria-expanded', nearOpen); }
   list = list.filter((f, i) => list.findIndex((g) => svcKey(g) === svcKey(f)) === i);    // one row per phone
-  const items = nearOpen ? (list.length ? list : [{ none: true }]) : [];
+  // Long lists are cut down until "Show more": on an office network this can be dozens of phones.
+  const over = nearOpen && !nearAll && list.length > NEARBY_AT_FIRST ? list.length - NEARBY_AT_FIRST : 0;
+  if (over) list = list.slice(0, NEARBY_AT_FIRST);
+  const items = nearOpen ? (list.length ? [...list, ...(over ? [{ more: over }] : [])] : [{ none: true }]) : [];
   // Keyed by the phone (its mDNS name), not its address: an IP change updates the row, it doesn't replace it.
-  syncRows(rows, items, (f) => (f.none ? '-none-' : svcKey(f)), (f) => {
+  syncRows(rows, items, (f) => (f.none ? '-none-' : f.more ? '-more-' : svcKey(f)), (f) => {
     if (f.none) return { cls: 'sec', html: 'None of these are ours.', attrs: { style: 'font-weight:400' } };
+    if (f.more) return { cls: 'sec more', html: `Show ${f.more} more`, attrs: { 'data-more': '1', role: 'button' } };
     const c = clsOf(f), sn = serialFromName(f);
     return {
       cls: `sitem ${known && !isOurs(c) ? 'other' : ''} ${svcKey(f) === peek ? 'on' : ''}`.replace(/\s+/g, ' ').trim(),
@@ -426,7 +433,8 @@ function renderFound() {
 }
 $('foundNet').addEventListener('click', async (e) => {
   if (e.target.closest('[data-only]')) { onlyOurs = !onlyOurs; store.set('onlyOurs', onlyOurs ? '1' : '0'); return renderFound(); }
-  if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
+  if (e.target.closest('[data-grp]')) { nearOpen = !nearOpen; nearAll = false; store.set('nearOpen', nearOpen ? '1' : '0'); return renderFound(); }
+  if (e.target.closest('[data-more]')) { nearAll = true; return renderFound(); }
   const row = e.target.closest('[data-addr]');
   if (!row) return;
   const f = found.find((x) => x.addr === row.dataset.addr) || { addr: row.dataset.addr, name: '' };
@@ -658,6 +666,28 @@ const progressOf = (d) => {
 };
 const RING = (p) => `<svg class="ring" viewBox="0 0 16 16"><circle class="bg" cx="8" cy="8" r="6.3"/><circle class="fg" cx="8" cy="8" r="6.3" stroke-dasharray="39.6" stroke-dashoffset="${(39.6 * (1 - p)).toFixed(1)}"/></svg>`;
 
+// ---- The sidebar's sections, the same five the Android app shows -------------------------
+// Pairing request · Ready to enrol · Enrolled · Connected · Nearby. Which one a device is in is a
+// fact about the device, not about whether we happen to hold a socket to it — an enrolled phone
+// seen on the Wi-Fi belongs under Enrolled even when nothing is connected to it.
+const fleetSerial = (sn) => sn && ((classCache.get(sn) || {}).c || {}).class === 'fleet';
+const isDone = (d) => d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen) || fleetSerial(d.serial);
+// Our agent already owns it but this MDM has no record: that still needs enrolling, so it stays
+// under "Ready to enrol" rather than being filed as done (the Android app counts it as done).
+const sectionOf = (d) => (isDone(d) ? 'enrolled' : ['ready', 'enrolling'].includes(d.status) ? 'ready' : 'connected');
+
+const SECTIONS = [['ready', 'Ready to enrol'], ['enrolled', 'Enrolled'], ['connected', 'Connected']];
+const rowHTML = (d) => {
+  const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
+  const p = progressOf(d), q = query.trim(), r = run[d.handle];
+  const qline = r?.queued ? 'Waiting…' : d.status === 'enrolling' ? (STEPS[r?.step ?? 0] || 'Enrolling') + '…' : '';
+  const label = q || qline
+    ? `<span class="two"><b>${hl(d.name || 'Unknown device')}</b><small class="${qline ? 'qstep' : ''}">${qline ? esc(qline) : hl(d.serial || d.handle)}</small></span>`
+    : `<span class="nm">${esc(d.name || 'Unknown device')}</span>`;
+  return `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span>${label}<span class="conn">${connIcons(d)}</span><span class="stat">${
+    p !== null ? RING(p) : ticked ? `<span class="tick">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
+};
+
 function renderRail() {
   renderFound();
   renderSaved();
@@ -665,44 +695,45 @@ function renderRail() {
   const rail = $('rail');
   let selEl = rail.querySelector('.rsel');
   if (!selEl) { selEl = document.createElement('div'); selEl.className = 'rsel'; rail.prepend(selEl); }
-  const have = new Map([...rail.querySelectorAll('.sitem[data-h]')].map((el) => [el.dataset.h, el]));
   const shown = visibleDevices();
   $('devCount').textContent = query.trim() ? `${shown.length} of ${devices.length}` : devices.length ? String(devices.length) : '';
-  shown.forEach((d, i) => {
-    let el = have.get(d.handle);
-    if (!el) {
-      el = document.createElement('button');
-      el.className = 'sitem in';
-      el.dataset.h = d.handle;
-      el.addEventListener('click', () => { selected = d.handle; peek = null; todayMode = false; if (batch) batch.follow = false; refresh(); });
+
+  // Enrolled phones the MDM knows that are on the Wi-Fi but nothing is connected to: on record,
+  // not reachable from here. They belong with the other enrolled ones, not in a list of strangers.
+  let onRecord = [];
+  if (!query.trim()) {
+    const here = new Set(devices.flatMap((d) => [hostOf(d.handle), ...(d.conns || []).map((c) => hostOf(c.handle))]).filter(Boolean));
+    onRecord = found.filter((f) => !here.has(hostOf(f.addr)) && !isConnected(f) && fleetSerial(serialFromName(f)))
+      .filter((f, i, a) => a.findIndex((g) => svcKey(g) === svcKey(f)) === i);
+  }
+  // One flat list of labels and rows, so a device moving between sections just moves its row.
+  const items = [];
+  for (const [key, title] of SECTIONS) {
+    const list = shown.filter((d) => sectionOf(d) === key);
+    const extra = key === 'enrolled' ? onRecord : [];
+    if (!list.length && !extra.length) continue;
+    items.push({ head: key, title });
+    list.forEach((d) => items.push({ d }));
+    extra.forEach((f) => items.push({ svc: f }));
+  }
+
+  syncRows(rail, items, (x) => (x.head ? 'h:' + x.head : x.d ? 'd:' + x.d.handle : 's:' + svcKey(x.svc)), (x) => {
+    if (x.head) return { cls: 'sec', html: esc(x.title) };
+    if (x.svc) {
+      const c = clsOf(x.svc), sn = serialFromName(x.svc);
+      return { cls: 'sitem off' + (svcKey(x.svc) === peek ? ' on' : ''), attrs: { 'data-svc': x.svc.addr, role: 'button', title: 'Enrolled in the MDM; nothing is connected to it from here' },
+        html: `<span class="glyph" style="--g:#8e8e93">${ICON.phone}</span><span class="two"><b>${esc(svcName(x.svc))}</b><small>${esc(hostOf(x.svc.addr))}${sn ? ' · ' + esc(sn) : ''}</small></span><span class="stat"><span class="tick">${CHECK}</span></span>` };
     }
-    have.delete(d.handle);
-    el.classList.toggle('on', d.handle === selected && !todayMode);
-    // Enrolled, or firmware the MDM has registered: a green tick instead of the status dot.
-    const ticked = d.status === 'enrolled' || (d.status === 'firmware' && d.server_seen);
-    const p = progressOf(d), q = query.trim();
-    const r = run[d.handle];
-    const qline = r?.queued ? 'Waiting…' : d.status === 'enrolling' ? (STEPS[r?.step ?? 0] || 'Enrolling') + '…' : '';
-    // Only redraw when something visible changed, so the tick animates once, not on every poll.
-    const sig = [d.name, d.status, d.class, ticked, iconOf(d).length, connLabel(d), glyphOf(d), p, qline, q].join('|');
-    if (el.dataset.sig !== sig) {
-      el.dataset.sig = sig;
-      el.title = `${d.name || 'Unknown device'} · ${stateLine(d)} · ${connLabel(d)}`;
-      const label = q || qline
-        ? `<span class="two"><b>${hl(d.name || 'Unknown device')}</b><small class="${qline ? 'qstep' : ''}">${qline ? esc(qline) : hl(d.serial || d.handle)}</small></span>`
-        : `<span class="nm">${esc(d.name || 'Unknown device')}</span>`;
-      el.innerHTML = `<span class="glyph" style="--g:${glyphOf(d)}">${iconOf(d)}</span>${label}<span class="conn">${connIcons(d)}</span><span class="stat">${
-        p !== null ? RING(p) : ticked ? `<span class="tick">${CHECK}</span>` : `<i class="${dotOf(d)}"></i>`}</span>`;
-    }
-    const want = rail.children[i + 1];      // +1: the selection highlight is the first child
-    if (want !== el) rail.insertBefore(el, want || null);
+    const d = x.d;
+    return { cls: 'sitem' + (d.handle === selected && !todayMode ? ' on' : ''),
+      attrs: { 'data-h': d.handle, role: 'button', title: `${d.name || 'Unknown device'} · ${stateLine(d)} · ${connLabel(d)}` },
+      html: rowHTML(d) };
   });
-  have.forEach((el) => el.remove());
+
   let none = rail.querySelector('.none');
-  const noneText = devices.length ? 'No match' : 'None connected';
   if (!shown.length) {
     if (!none) { none = document.createElement('div'); none.className = 'none'; rail.appendChild(none); }
-    none.textContent = noneText;
+    none.textContent = devices.length ? 'No match' : 'None connected';
   } else if (none) none.remove();
   let hint = rail.querySelector('.addhint');
   if (devices.length && !query.trim()) {
@@ -715,6 +746,16 @@ function renderRail() {
   else selEl.style.opacity = 0;
   renderBatchBtn();
 }
+$('rail').addEventListener('click', (e) => {
+  const row = e.target.closest('[data-h]');
+  if (row) { selected = row.dataset.h; peek = null; todayMode = false; if (batch) batch.follow = false; return refresh(); }
+  // An enrolled phone we hold no connection to: show what the MDM knows, same as a nearby one.
+  const svc = e.target.closest('[data-svc]');
+  if (svc) {
+    const f = found.find((x) => x.addr === svc.dataset.svc);
+    if (f) { peek = svcKey(f); peekAddr = f.addr; selected = null; todayMode = false; heroKey = ''; refresh(); }
+  }
+});
 
 const stepRow = (s, i, step) => `<div class="row steprow ${i < step ? 'done' : i === step ? 'now' : 'todo'}" data-i="${i}"><span class="k">${s}</span><span class="state">${i < step ? CHECK : i === step ? '<span class="spin"></span>' : ''}</span></div>`;
 
