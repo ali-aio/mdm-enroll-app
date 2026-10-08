@@ -1239,6 +1239,22 @@ mod tests {
     }
 
     #[test]
+    fn the_fleet_key_is_handed_to_adb_as_a_vendor_key() {
+        // `adb` only offers an extra key when ADB_VENDOR_KEYS names it, so every spawn must carry it.
+        let mut a = Adb { bin: PathBuf::from("/bin/echo"), timeout: DEFAULT_TIMEOUT, vendor_keys: None };
+        let env_of = |a: &Adb| {
+            a.cmd().get_envs().find(|(k, _)| *k == std::ffi::OsStr::new("ADB_VENDOR_KEYS"))
+                .and_then(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        assert_eq!(env_of(&a), None);
+        a.vendor_keys = Some(PathBuf::from("/tmp/fleet-adbkey"));
+        assert_eq!(env_of(&a).as_deref(), Some("/tmp/fleet-adbkey"));
+        // and the shorter/longer-timeout clones keep it, or a probe would lose the key
+        assert_eq!(a.quick().vendor_keys, a.vendor_keys);
+        assert_eq!(a.patient(60).vendor_keys, a.vendor_keys);
+    }
+
+    #[test]
     fn one_shell_reply_is_cut_back_into_its_parts() {
         // The shape a real phone sends back: a getprop dump, then a marked section each.
         let out = concat!(

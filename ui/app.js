@@ -256,11 +256,14 @@ const serialFromName = (s) => { const n = s.name || ''; const m = /^adb-(.+)-[A-
 const clsOf = (svc) => (classCache.get(serialFromName(svc)) || {}).c || null;
 const isOurs = (c) => !!c && ['fleet', 'production', 'family', 'lookalike'].includes(c.class);
 const classKnown = () => classCache.size > 0;
-async function classifyFor(list) {
-  const serials = [...new Set(list.map(serialFromName).filter(Boolean))];
+const classifyFor = (list) => classifySerials(list.map(serialFromName));
+// Asks the MDM about a batch of serials and caches the answers. Used for the phones on the Wi-Fi
+// (for their labels) *and* for the connected ones, whose known-model class pre-fills "Used as".
+async function classifySerials(list) {
+  const serials = [...new Set(list.filter(Boolean))];
   const now = Date.now();
   const need = serials.filter((s) => !classCache.has(s) || now - classCache.get(s).t > 30000);
-  if (!need.length || now < classOffUntil) return;
+  if (!need.length || now < classOffUntil) return false;
   try {
     const m = await invoke('classify_serials', { serials: need });
     // A device the MDM knows may still not be managed now (e.g. reflashed with firmware that has no
@@ -273,7 +276,9 @@ async function classifyFor(list) {
       if (c.class === 'fleet' && seen[s]) { c.last_seen = seen[s].last_seen_at || ''; c.checked = true; }
       classCache.set(s, { c, t: now });
     });
+    return true;
   } catch { classOffUntil = now + 60000; }      // older server / offline: no labels, nothing breaks
+  return false;
 }
 const STALE_MS = 3600e3;                         // not heard from for an hour: not managed right now
 const agoShort = (ts) => {
@@ -313,7 +318,36 @@ async function discover() {
     autoPairPopup();
     renderFound();
     if ((!devices.length || peek) && !todayMode) renderHero();
+    autoConnect();
   } catch {} finally { discBusy = false; }
+}
+
+// ---- Connecting by itself ----------------------------------------------------------------
+// A phone whose adb key we already hold (AIO firmware trusts the fleet key; a phone paired before
+// trusts this computer's own) needs no code and no click. Try each one in the background, so the
+// list is devices that are *ready*, not devices to go and fetch. Nothing is installed or changed
+// by connecting — it is the same handshake the Pair button does.
+const AUTO_RETRY_MS = 60000;      // a refusal is remembered this long: don't hammer a phone that said no
+const AUTO_AT_ONCE = 4;
+const autoTried = new Map();      // host -> when we last tried it
+const autoBusy = new Set();       // hosts with an attempt in flight
+function autoConnect() {
+  if (!adb.found || $('app').hidden) return;
+  const now = Date.now();
+  for (const f of found) {
+    const host = hostOf(f.addr);
+    if (!host || autoBusy.size >= AUTO_AT_ONCE) break;
+    // Not one we were told to leave alone, not already here, not tried a moment ago.
+    if (autoBusy.has(host) || ignoredHosts.includes(host) || isConnected(f)) continue;
+    if (now - (autoTried.get(host) || 0) < AUTO_RETRY_MS) continue;
+    autoTried.set(host, now);
+    autoBusy.add(host);
+    const addrs = found.filter((x) => hostOf(x.addr) === host).map((x) => x.addr);
+    invoke('wifi_connect_known', { host, addrs })
+      .then((handle) => { if (handle) { autoTried.delete(host); tick(); } })
+      .catch(() => {})
+      .finally(() => autoBusy.delete(host));
+  }
 }
 // A phone is already connected if any connection has the same address, the same discovery name, or
 // the same IP: one phone has several ports (5555 after "Switch to Wi-Fi", another for Wireless debugging).
@@ -1403,6 +1437,11 @@ async function tick() {
     rawDevices = next;
     const prevSerial = (devices.find((x) => x.handle === selected) || {}).serial;
     devices = mergeDevices(next);
+    // So "Used as" can pre-fill with the class the MDM already gives this model. Fire and forget:
+    // the answer lands in the cache and the next redraw picks it up.
+    classifySerials(devices.filter((d) => d.status === 'ready').map((d) => d.serial))
+      .then((fresh) => { if (fresh) { heroKey = ''; refresh(); } })
+      .catch(() => {});
     if (!loaded) { loaded = true; $('rail').innerHTML = ''; $('hero').className = 'hero'; heroKey = ''; }
     if (!peek && !devices.some((d) => d.handle === selected)) {
       const same = prevSerial && devices.find((x) => x.serial === prevSerial);   // e.g. the cable was unplugged

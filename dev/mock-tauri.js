@@ -30,6 +30,7 @@
   ];
   const CLASS = {
     DP02256HJ0342: { class: 'other' }, R95Y405MG3X: { class: 'family', family: 'SUNMI D3 Pro', family_count: 3, device_class: 'pos' },
+    P3121C30418: { class: 'family', family: 'SUNMI D3 Pro', family_count: 3, device_class: 'pos' },   // connected: pre-fills "Used as"
     AT070AABU00875: { class: 'production', production: 'T7 batch BU', model: '07' },
     AT070AA2600030: { class: 'fleet', name: 'AIO T7', device_class: 't7' },
     AT070AA2600031: { class: 'fleet', name: 'AIO T7', device_class: 't7' },
