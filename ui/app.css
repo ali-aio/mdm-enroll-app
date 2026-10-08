@@ -414,7 +414,9 @@ html[data-theme="dark"] .drawer .dt button.on { background: #636366; }
 .search .ic { width: 13px; height: 13px; flex: none; }
 .search input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; color: var(--text); outline: none; padding: 0; }
 .search:focus-within .kbd { display: none; }
-.kbd { display: inline-block; font: 10.5px var(--font); padding: 0 5px; border-radius: 4px; box-shadow: inset 0 0 0 .5px var(--border), 0 1px 0 var(--border); color: var(--muted); background: var(--row); line-height: 16px; white-space: nowrap; }
+/* Centres on its own box instead of a fixed line-height: the ↩ glyph is taller than the letters
+   beside it and was being clipped, worst on Linux where the label reads "Ctrl+↩". */
+.kbd { display: inline-flex; align-items: center; justify-content: center; font: 10.5px var(--font); padding: 1px 5px; min-height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 .5px var(--border), 0 1px 0 var(--border); color: var(--muted); background: var(--row); line-height: 1; white-space: nowrap; }
 .cc-btn.primary .kbd { background: transparent; color: rgba(255, 255, 255, .85); box-shadow: inset 0 0 0 .5px rgba(255, 255, 255, .5); }
 mark { background: color-mix(in srgb, var(--warn-solid) 40%, transparent); color: inherit; border-radius: 2px; }
 .sitem .two small mark { color: var(--text); }

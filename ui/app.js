@@ -123,6 +123,9 @@ document.addEventListener('keydown', (e) => {
 applyZoom();
 const IS_MAC = document.documentElement.dataset.os === 'mac';
 const MOD = IS_MAC ? '⌘' : 'Ctrl+';
+// macOS draws ⌘↩ in its own font and it looks right; elsewhere the ↩ glyph comes from whatever
+// fallback font is installed, sits taller than the letters, and crowds the chip. Spell it out.
+const RET = IS_MAC ? '↩' : 'Enter';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rel = (ts) => {
   const t = typeof ts === 'number' ? ts : Date.parse(ts || '');
@@ -898,7 +901,7 @@ function renderHero() {
       : !cls ? 'Pick what this device is used as. The MDM fills this in by itself only for a model it already knows.'
       : site.id ? 'It skips the onboarding inbox and shows up in this restaurant right away.' : 'The class tells the MDM what this device is. It can be changed later on the dashboard.');
     acts = `<div class="dacts">${r?.error ? `<span class="err shake">${esc(r.error)}</span>` : ''}<button class="cc-btn primary lg" id="go" ${batch || !cls ? 'disabled' : ''} ${
-      cls ? '' : 'title="Pick what this device is used as first"'}>${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'} <span class="kbd">${MOD}↩</span></button></div>`;
+      cls ? '' : 'title="Pick what this device is used as first"'}>${r?.error ? 'Try Again' : ours ? 'Re-enrol' : 'Enrol'} <span class="kbd">${MOD}${RET}</span></button></div>`;
   } else if (d.status === 'enrolling') {
     enrolG = group('Enrolling', STEPS.map((s, i) => stepRow(s, i, r?.step ?? 0)));
   } else if (d.status === 'enrolled') {
@@ -1534,7 +1537,7 @@ function drawTab() {
       <div class="tcard" style="margin-top:16px"><b>Keyboard</b><div class="keys">
         <span class="kbd">${MOD}F</span><span>Search by name or serial</span>
         <span class="kbd">↑ ↓</span><span>Move through the devices</span>
-        <span class="kbd">${MOD}↩</span><span>Enrol the selected device</span>
+        <span class="kbd">${MOD}${RET}</span><span>Enrol the selected device</span>
         <span class="kbd">${MOD}${IS_MAC ? '⇧' : 'Shift+'}W</span><span>Switch it to Wi-Fi</span></div></div>`;
     const cap = body.querySelector('.cap');
     Guide.loop(body.querySelector('.ph-slot'), alive, (sc) => { cap.textContent = Guide.CAP[sc]; });
