@@ -404,6 +404,21 @@ fn me(app: AppHandle, state: tauri::State<State>) -> Option<Me> {
     if g.is_none() {
         *g = load_session(&app);
     }
+    // A session restored from disk never went through sign_in, so nothing fetched the keys.
+    // With none on disk this computer would need a pairing code for every device, silently.
+    // Only when there are none: fetch_fleet_key asks the server for the profile first, and
+    // that is not worth a round trip on every call.
+    if let Some(s) = g.as_ref() {
+        if !have_fleet_keys(&app) {
+            let (app2, s2) = (app.clone(), s.clone());
+            std::thread::spawn(move || {
+                if fetch_fleet_key(&app2, &s2) {
+                    let st = app2.state::<State>();
+                    apply_fleet_key(&app2, &st);
+                }
+            });
+        }
+    }
     g.as_ref().map(|s| Me { username: s.username.clone(), role: s.role.clone(), server: s.server.clone() })
 }
 
