@@ -68,12 +68,30 @@ pub struct Profile {
 /// The adb key AIO firmware images trust. Fetched after sign-in, never shipped in the app.
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct FleetKey {
+    /// Which lot of devices this key is for: "default" is the AIO firmware's, the rest are one
+    /// per vendor, because a key baked into an image can only be replaced by a firmware release.
+    #[serde(default = "default_label")]
+    pub label: String,
     #[serde(default)]
     pub version: i64,
     #[serde(default)]
     pub fingerprint: String,
     #[serde(default)]
     pub private_key_pem: String,
+}
+
+fn default_label() -> String {
+    "default".to_string()
+}
+
+/// What `/api/v1/app/adb-key` answers: every key, plus the default one repeated at the top
+/// level for apps older than vendor keys.
+#[derive(Clone, Debug, Deserialize, Default)]
+pub struct FleetKeys {
+    #[serde(default)]
+    pub keys: Vec<FleetKey>,
+    #[serde(flatten)]
+    pub single: FleetKey,
 }
 
 /// How the server sees a nearby phone's serial: fleet | production | family | lookalike | other.
@@ -234,20 +252,26 @@ impl Session {
             .map_err(|e| ApiError::Other(e.to_string()))
     }
 
-    /// The fleet adb key, so this computer can talk to AIO firmware without a pairing code.
-    /// `Ok(None)` when the server has no key uploaded, or is too old to have the endpoint — both
-    /// are ordinary: pairing codes still work. An expired session still comes back as an error.
-    pub fn fleet_key(&self) -> Result<Option<FleetKey>, ApiError> {
+    /// The adb keys, so this computer can talk to our devices without a pairing code — one per
+    /// vendor, since each image trusts only the key that was built into it.
+    /// An empty list when the server has no key uploaded, or is too old to have the endpoint —
+    /// both are ordinary: pairing codes still work. An expired session still comes back as an error.
+    pub fn fleet_keys(&self) -> Result<Vec<FleetKey>, ApiError> {
         match agent()
             .get(&format!("{}/api/v1/app/adb-key", self.server))
             .set("Authorization", &self.auth())
             .call()
         {
             Ok(r) => {
-                let k: FleetKey = r.into_json().map_err(|e| ApiError::Other(e.to_string()))?;
-                Ok((!k.private_key_pem.trim().is_empty()).then_some(k))
+                let k: FleetKeys = r.into_json().map_err(|e| ApiError::Other(e.to_string()))?;
+                let mut keys = k.keys;
+                if keys.is_empty() {
+                    keys.push(k.single); // a server from before there were several
+                }
+                keys.retain(|k| !k.private_key_pem.trim().is_empty());
+                Ok(keys)
             }
-            Err(ureq::Error::Status(404, _)) => Ok(None),
+            Err(ureq::Error::Status(404, _)) => Ok(Vec::new()),
             Err(e) => Err(map_err(e)),
         }
     }

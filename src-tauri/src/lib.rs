@@ -147,10 +147,12 @@ fn clear_session(app: &AppHandle) {
     }
 }
 
-/// Where the fleet adb key is kept while someone is signed in. 0600, and deleted on sign-out:
-/// it is the whole fleet's key, so it never outlives the session that fetched it.
-fn fleet_key_path(app: &AppHandle) -> Option<PathBuf> {
-    Some(config_dir(app)?.join("fleet-adbkey"))
+/// Where the adb keys are kept while someone is signed in: one file per vendor, each 0600, in a
+/// directory `ADB_VENDOR_KEYS` can be pointed at whole (adb loads every key in a directory it is
+/// given). Deleted on sign-out: they open every device we have, so they never outlive the session
+/// that fetched them.
+fn fleet_keys_dir(app: &AppHandle) -> Option<PathBuf> {
+    Some(config_dir(app)?.join("fleet-keys"))
 }
 
 fn fleet_key_version(app: &AppHandle) -> i64 {
@@ -160,41 +162,68 @@ fn fleet_key_version(app: &AppHandle) -> i64 {
         .unwrap_or(0)
 }
 
-/// Puts the fleet key where adb will offer it, or takes it away again. Returns true when the file
-/// on disk actually changed, which is the only time the adb server is worth restarting.
-fn set_fleet_key(app: &AppHandle, key: Option<&api::FleetKey>) -> bool {
-    let (Some(path), Some(dir)) = (fleet_key_path(app), config_dir(app)) else { return false };
-    let ver = dir.join("fleet-adbkey.version");
-    match key {
-        Some(k) => {
-            let pem = k.private_key_pem.trim();
-            if std::fs::read_to_string(&path).map(|c| c.trim() == pem).unwrap_or(false) {
-                return false;
-            }
-            write_private(&path, &format!("{pem}\n"));
-            let _ = std::fs::write(&ver, k.version.to_string());
-            true
-        }
-        None => {
-            let had = path.exists();
-            let _ = std::fs::remove_file(&path);
-            let _ = std::fs::remove_file(&ver);
-            had
-        }
-    }
+/// True when the directory holds at least one key.
+fn have_fleet_keys(app: &AppHandle) -> bool {
+    fleet_keys_dir(app)
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .map(|mut e| e.any(|f| f.is_ok()))
+        .unwrap_or(false)
 }
 
-/// Fetches the fleet key when the server has a newer one than the copy on disk, and makes adb
-/// offer it. A server with no key (or too old to have the endpoint) is not an error: pairing
-/// codes still work, so this only ever quietly does nothing.
-/// Blocking: the network half. True when the key on disk changed and adb must be told.
+/// Puts the keys where adb will offer them, or takes them away again. Returns true when what is
+/// on disk actually changed, which is the only time the adb server is worth restarting.
+fn set_fleet_keys(app: &AppHandle, keys: &[api::FleetKey]) -> bool {
+    let (Some(dir), Some(cfg)) = (fleet_keys_dir(app), config_dir(app)) else { return false };
+    let ver = cfg.join("fleet-adbkey.version");
+    // The single key this app kept before vendors had their own; it is in the directory now.
+    let _ = std::fs::remove_file(cfg.join("fleet-adbkey"));
+    if keys.is_empty() {
+        let had = have_fleet_keys(app);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&ver);
+        return had;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let mut changed = false;
+    let mut wanted: Vec<String> = Vec::new();
+    for k in keys {
+        // The label comes from the server and ends up in a file name: keep it to what we named it.
+        let label: String = k.label.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let label = if label.is_empty() { "default".to_string() } else { label };
+        let name = format!("{label}.adb_key");
+        let path = dir.join(&name);
+        let pem = k.private_key_pem.trim();
+        if !std::fs::read_to_string(&path).map(|c| c.trim() == pem).unwrap_or(false) {
+            write_private(&path, &format!("{pem}\n"));
+            changed = true;
+        }
+        wanted.push(name);
+    }
+    // A key the server no longer has must stop being offered.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !wanted.contains(&name) {
+                let _ = std::fs::remove_file(e.path());
+                changed = true;
+            }
+        }
+    }
+    let _ = std::fs::write(&ver, keys.iter().map(|k| k.version).max().unwrap_or(0).to_string());
+    changed
+}
+
+/// Fetches the keys when the server has newer ones than the copies on disk, and makes adb offer
+/// them. A server with no key (or too old to have the endpoint) is not an error: pairing codes
+/// still work, so this only ever quietly does nothing.
+/// Blocking: the network half. True when what is on disk changed and adb must be told.
 fn fetch_fleet_key(app: &AppHandle, session: &Session) -> bool {
     let want = session.profile().map(|p| p.adb_key_version).unwrap_or(0);
-    if want != 0 && want == fleet_key_version(app) && fleet_key_path(app).map(|p| p.exists()).unwrap_or(false) {
-        return false;                             // already have this one
+    if want != 0 && want == fleet_key_version(app) && have_fleet_keys(app) {
+        return false;                             // already have these
     }
-    match session.fleet_key() {
-        Ok(k) => set_fleet_key(app, k.as_ref()),
+    match session.fleet_keys() {
+        Ok(k) => set_fleet_keys(app, &k),
         Err(_) => false,                          // offline or expired: leave what we have
     }
 }
@@ -202,7 +231,7 @@ fn fetch_fleet_key(app: &AppHandle, session: &Session) -> bool {
 /// Points the live `Adb` at the key file (or away from it) and restarts the adb server, which is
 /// the only moment it reads `ADB_VENDOR_KEYS`.
 fn apply_fleet_key(app: &AppHandle, st: &State) {
-    let path = fleet_key_path(app).filter(|p| p.exists());
+    let path = fleet_keys_dir(app).filter(|_| have_fleet_keys(app));
     // adb that hasn't started yet picks the file up in adb_of, so there is nothing to do here.
     let changed = {
         let mut g = st.adb.lock().unwrap();
@@ -225,7 +254,7 @@ fn adb_of(app: &AppHandle, st: &State) -> Result<Adb, String> {
         let res: Option<PathBuf> = app.path().resource_dir().ok();
         *g = Adb::find(res.as_deref());
         if let Some(a) = g.as_mut() {
-            a.vendor_keys = fleet_key_path(app).filter(|p| p.exists());
+            a.vendor_keys = fleet_keys_dir(app).filter(|_| have_fleet_keys(app));
             a.start_server();
         }
     }
@@ -409,8 +438,8 @@ async fn sign_in_inner(app: AppHandle, state: tauri::State<'_, State>, server: S
 async fn sign_out(app: AppHandle, state: tauri::State<'_, State>) -> Result<(), String> {
     let s = state.session.lock().unwrap().take();
     clear_session(&app);
-    // The fleet key belongs to the session, not to this computer.
-    if set_fleet_key(&app, None) {
+    // The keys belong to the session, not to this computer.
+    if set_fleet_keys(&app, &[]) {
         apply_fleet_key(&app, &state);
     }
     if let Some(s) = s {
