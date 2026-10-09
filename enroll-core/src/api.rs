@@ -166,6 +166,35 @@ pub fn normalize_server(s: &str) -> Result<String, String> {
     }
 }
 
+/// What the MDM shows against a key fetch: which app asked, and which build of it.
+fn app_tag() -> String {
+    format!("AIO Enroll desktop {} ({})", env!("CARGO_PKG_VERSION"), std::env::consts::OS)
+}
+
+/// The machine, as a person would recognise it. Falls back to the platform when the host has
+/// no name to give.
+fn machine_tag() -> String {
+    for var in ["COMPUTERNAME", "HOSTNAME"] {
+        if let Ok(v) = std::env::var(var) {
+            if !v.trim().is_empty() {
+                return v.trim().to_string();
+            }
+        }
+    }
+    if let Ok(v) = std::fs::read_to_string("/etc/hostname") {
+        if !v.trim().is_empty() {
+            return v.trim().to_string();
+        }
+    }
+    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Adds the two headers that say who is asking. Every call that signs in or fetches keys
+/// carries them; the server logs them against the fetch.
+fn tagged(req: ureq::Request) -> ureq::Request {
+    req.set("X-AIO-App", &app_tag()).set("X-AIO-Device", &machine_tag())
+}
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(8))
@@ -192,8 +221,7 @@ fn map_err(e: ureq::Error) -> ApiError {
 
 pub fn login(server: &str, username: &str, password: &str) -> Result<Session, ApiError> {
     let server = normalize_server(server).map_err(ApiError::Other)?;
-    let v: serde_json::Value = agent()
-        .post(&format!("{server}/api/v1/app/login"))
+    let v: serde_json::Value = tagged(agent().post(&format!("{server}/api/v1/app/login")))
         .send_json(serde_json::json!({"username": username, "password": password}))
         .map_err(|e| match e {
             // A wrong password is a sign-in failure, not "session expired".
@@ -257,8 +285,7 @@ impl Session {
     /// An empty list when the server has no key uploaded, or is too old to have the endpoint —
     /// both are ordinary: pairing codes still work. An expired session still comes back as an error.
     pub fn fleet_keys(&self) -> Result<Vec<FleetKey>, ApiError> {
-        match agent()
-            .get(&format!("{}/api/v1/app/adb-key", self.server))
+        match tagged(agent().get(&format!("{}/api/v1/app/adb-key", self.server)))
             .set("Authorization", &self.auth())
             .call()
         {
